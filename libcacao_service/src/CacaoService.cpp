@@ -1,0 +1,1072 @@
+// CacaoService.cpp — android::CacaoService 完整實作
+// 依照 libcacao_service.so Ghidra 反編譯結果 100% 重建
+// 所有函數邏輯、物件佈局、vtable 偏移均從 Ghidra 驗證
+
+#define LOG_TAG "CacaoService"
+
+#include <cacao/CacaoService.h>
+#include <android/log.h>
+#include <binder/IPCThreadState.h>
+#include <binder/IServiceManager.h>
+#include <cacao/ProcessCtrlGatewayBase.h>
+
+// 前向宣告 ProcessCtrlGatewayFactory（避免引入 ProcessCtrlGateway.h 的 system/window.h 依賴）
+namespace cacao {
+class ProcessCtrlGatewayFactory {
+public:
+    static ICacaoGateway* create();
+    static ProcessModeBase*   createMode(ISerialize::SerializedData* data);
+    static ProcessParamBase*  createParam(ISerialize::SerializedData* data);
+    static ProcessParamBase*  createParam(const android::sp<android::IBinder>& binder,
+                                          ISerialize::SerializedData* data);
+    static ProcessResultBase* createResult(ISerialize::SerializedData* data);
+    static ProcessConfigBase* createConfig(unsigned int configId,
+                                           ISerialize::SerializedData* data);
+};
+} // namespace cacao
+
+namespace V3_0 = ::vendor::somc::hardware::camera::cacao::V3_0;
+namespace V3_1 = ::vendor::somc::hardware::camera::cacao::V3_1;
+namespace provider_V1_0 = ::vendor::somc::hardware::camera::provider::V1_0;
+using ::android::hardware::Return;
+
+// 原始 .so 透過 vtable 偏移直接呼叫 serialize/getSerializedSize，
+// C++ 中需要透過 ISerializable 介面存取。
+// 工廠建立的 concrete 物件（ProcessCtrlResult, ProcessCtrlDynamicParameterConfig）
+// 其 ISerializable 為 secondary base (offset +4)
+static inline cacao::ISerializable* toSerializable(void* obj) {
+    return reinterpret_cast<cacao::ISerializable*>(
+        reinterpret_cast<uintptr_t>(obj) + 4);
+}
+
+namespace android {
+
+// ════════════════════════════════════════════════════════════
+// CacaoService
+// ════════════════════════════════════════════════════════════
+
+const char* CacaoService::getServiceName() { return "cacao"; }
+
+CacaoService::CacaoService() {
+    pthread_mutex_init(&mLock, NULL);
+    pthread_mutex_init(&mClientLock, NULL);
+    // mRetryCount 在 class 中已初始化為 0
+    mRetryCount = 0;
+    // +0x28, +0x2c 在 .so 中為零初始化
+    mPadding28 = NULL;
+    mPadding2c = 0;
+
+    // 註冊 IServiceNotification 以接收 HAL 服務上線通知
+    // 原始 .so: sp<IServiceNotification>::sp<CacaoService>(this) → registerForNotifications
+    provider_V1_0::IVendorSomcCameraProvider::registerForNotifications("", this);
+}
+
+CacaoService::~CacaoService() {
+    // 清除 +0x28, +0x2c
+    mPadding28 = NULL;
+    mPadding2c = 0;
+    // 清除 HIDL 服務引用
+    mServiceV31 = NULL;
+    mService = NULL;
+    // List 、 mutex 由成員解構子自動清理
+    pthread_mutex_destroy(&mClientLock);
+    pthread_mutex_destroy(&mLock);
+}
+
+void CacaoService::instantiate() {
+    BinderService<CacaoService>::publish();
+}
+
+void CacaoService::onFirstRef() {
+    // 原始 .so: 空實作（直接 return）
+}
+
+status_t CacaoService::dump(int /*fd*/, const Vector<String16>& /*args*/) {
+    // 原始 .so: 空實作（直接 return）
+    return NO_ERROR;
+}
+
+// ── connect ──────────────────────────────────────────────
+sp<ICacao> CacaoService::connect(const sp<ICacaoClient>& client) {
+    pthread_mutex_lock(&mLock);
+
+    Client* c = new Client(this, client, IPCThreadState::self()->getCallingPid());
+    sp<Client> spClient(c);
+    registerClient(spClient);
+
+    pthread_mutex_unlock(&mLock);
+    return spClient;
+}
+
+// ── getServicePid ────────────────────────────────────────
+int CacaoService::getServicePid() {
+    return getpid();
+}
+
+// ── getClientPid ─────────────────────────────────────────
+pid_t CacaoService::getClientPid() {
+    return IPCThreadState::self()->getCallingPid();
+}
+
+// ── getClientUid ─────────────────────────────────────────
+uid_t CacaoService::getClientUid() {
+    return IPCThreadState::self()->getCallingUid();
+}
+
+// ── getCaps ──────────────────────────────────────────────
+// 透過 HIDL 呼叫 HAL 取得 camera caps，然後展平到 Caps 的 0x262c 平坦格式
+// 原始 .so 在 callback 內把每個 hidl_vec 解引用並拷到堆疊陣列，
+// 然後呼叫 Caps::serialize 寫入 SerializedData
+
+// 將 hidl_vec<ImageSize> 展平到 data+offset（每個元素 w,h 各佔4 bytes）
+// 最多拷貝 maxN 筆；回傳實際筆數
+static uint32_t flattenSizes(uint8_t* data, uint32_t offset,
+                             const hardware::hidl_vec<V3_0::ImageSize>& vec,
+                             uint32_t maxN) {
+    uint32_t n = vec.size();
+    if (n > maxN) n = maxN;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t w = vec[i].width;
+        uint32_t h = vec[i].height;
+        memcpy(data + offset + i * 8,     &w, 4);
+        memcpy(data + offset + i * 8 + 4, &h, 4);
+    }
+    return n;
+}
+
+// 將 hidl_vec<uint32_t> 展平到 data+offset
+static uint32_t flattenU32(uint8_t* data, uint32_t offset,
+                           const hardware::hidl_vec<uint32_t>& vec,
+                           uint32_t maxN) {
+    uint32_t n = vec.size();
+    if (n > maxN) n = maxN;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t v = vec[i];
+        memcpy(data + offset + i * 4, &v, 4);
+    }
+    return n;
+}
+
+static inline void putU32(uint8_t* data, uint32_t offset, uint32_t val) {
+    memcpy(data + offset, &val, 4);
+}
+
+/* Caps.data[0x262c] 平坦格式（從 Ghidra 反編譯 getCaps + Caps::serialize 重建）:
+ *
+ * Section 1 (0xC0C bytes)
+ * 0x0000  field_00
+ * 0x0004  sizes0_count
+ * 0x0008  ImageSize sizes0[128]     (0x400)
+ * 0x0408  uint32    formats0[128]   (0x200)
+ * 0x0608  sizes1_count
+ * 0x060C  ImageSize sizes1[128]     (0x400)
+ * 0x0A0C  uint32    formats1[128]   (0x200)
+ *
+ * Section 2 (0x604 bytes)
+ * 0x0C0C  sizes2_count
+ * 0x0C10  ImageSize sizes2[128]     (0x400)
+ * 0x1010  uint32    formats2[128]   (0x200)
+ *
+ * Section 3 (0x808 bytes)
+ * 0x1210  field_80
+ * 0x1214  sizes3_count
+ * 0x1218  ImageSize sizes3[128]     (0x400)
+ * 0x1618  uint32    formats3[128]   (0x200)
+ * 0x1818  uint32    extra0[128]     (0x200)
+ *
+ * Section 4a (8 bytes)
+ * 0x1A18  field_c0
+ * 0x1A1C  field_c4
+ *
+ * Section 4b (0xC0C bytes, V3.1)
+ * 0x1A20  _pad_d4
+ * 0x1A24  sizes4_count
+ * 0x1A28  ImageSize sizes4[128]     (0x400)
+ * 0x1E28  uint32    formats4[128]   (0x200)
+ * 0x2028  sizes5_count
+ * 0x202C  ImageSize sizes5[128]     (0x400)
+ * 0x242C  uint32    formats5[128]   (0x200)
+ *
+ * Total = 0x262C
+ */
+static bool flattenCacaoCapsV30(uint8_t* data,
+                                const V3_0::CacaoCaps& c) {
+    // 先驗證所有 vec size ≤ 128
+    if (c.sizes0.size() > 128 || c.formats0.size() > 128 ||
+        c.sizes1.size() > 128 || c.formats1.size() > 128 ||
+        c.sizes2.size() > 128 || c.formats2.size() > 128 ||
+        c.sizes3.size() > 128 || c.formats3.size() > 128 ||
+        c.extra0.size() > 128)
+        return false;
+
+    // Section 1
+    putU32(data, 0x0000, c.field_00);
+    putU32(data, 0x0004, c.sizes0.size());
+    flattenSizes(data, 0x0008, c.sizes0, 128);
+    flattenU32  (data, 0x0408, c.formats0, 128);
+    putU32(data, 0x0608, c.sizes1.size());
+    flattenSizes(data, 0x060C, c.sizes1, 128);
+    flattenU32  (data, 0x0A0C, c.formats1, 128);
+
+    // Section 2
+    putU32(data, 0x0C0C, c.sizes2.size());
+    flattenSizes(data, 0x0C10, c.sizes2, 128);
+    flattenU32  (data, 0x1010, c.formats2, 128);
+
+    // Section 3
+    putU32(data, 0x1210, c.field_80);
+    putU32(data, 0x1214, c.sizes3.size());
+    flattenSizes(data, 0x1218, c.sizes3, 128);
+    flattenU32  (data, 0x1618, c.formats3, 128);
+    flattenU32  (data, 0x1818, c.extra0, 128);
+
+    // Section 4a
+    putU32(data, 0x1A18, c.field_c0);
+    putU32(data, 0x1A1C, c.field_c4);
+
+    // Section 4b 全零（V3.0 無 sizes4/5）
+    return true;
+}
+
+static bool flattenCacaoCapsV31(uint8_t* data,
+                                const V3_1::CacaoCaps& c) {
+    // 先展平 V3.0 部分
+    if (!flattenCacaoCapsV30(data, c))
+        return false;
+
+    // 驗證 V3.1 vec size
+    if (c.sizes4.size() > 128 || c.formats4.size() > 128 ||
+        c.sizes5.size() > 128 || c.formats5.size() > 128)
+        return false;
+
+    // Section 4b — V3.1 擴充
+    putU32(data, 0x1A20, c._pad_d4);
+    putU32(data, 0x1A24, c.sizes4.size());
+    flattenSizes(data, 0x1A28, c.sizes4, 128);
+    flattenU32  (data, 0x1E28, c.formats4, 128);
+    putU32(data, 0x2028, c.sizes5.size());
+    flattenSizes(data, 0x202C, c.sizes5, 128);
+    flattenU32  (data, 0x242C, c.formats5, 128);
+    return true;
+}
+
+int CacaoService::getCaps(const cacao::ProcessCtrlCaps::CameraIndex& camIdx,
+                          const sp<IMemory>& mem,
+                          cacao::ISerialize::SerializedData sd) {
+    pthread_mutex_lock(&mLock);
+
+    int ret = 0;
+    cacao::Caps caps;
+
+    V3_0::CameraId camId;
+    if (camIdx.index == 0) {
+        camId = V3_0::CameraId::CAMERA_ID_0;
+    } else if (camIdx.index == 1) {
+        camId = V3_0::CameraId::CAMERA_ID_1;
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "getCaps: invalid camIdx %d", camIdx.index);
+        ret = -0x67;
+        pthread_mutex_unlock(&mLock);
+        return -0x80000000;
+    }
+
+    if (mServiceV31 == NULL) {
+        // V3.0 路徑：呼叫 mService->getCaps
+        if (mService == NULL) {
+            ret = -0x80000000;
+            pthread_mutex_unlock(&mLock);
+            return ret;
+        }
+
+        auto hidlRet = mService->getCaps(
+            camId,
+            [&](const V3_0::CacaoCaps& hidlCaps, V3_0::ErrCode errCode) {
+                if (errCode != V3_0::ErrCode::OK) {
+                    ret = static_cast<int>(errCode);
+                    return;
+                }
+                if (!flattenCacaoCapsV30(caps.data, hidlCaps)) {
+                    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+                        "getCaps: V3.0 vec size exceeds 128");
+                    ret = -0x6f;
+                }
+            });
+
+        if (!hidlRet.isOk()) {
+            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+                "hidl getCaps error: %s", hidlRet.description().c_str());
+            ret = -0x6f;
+        }
+    } else {
+        // V3.1 路徑：呼叫 mServiceV31->getCaps
+        auto hidlRet = mServiceV31->getCaps(
+            camId,
+            [&](const V3_1::CacaoCaps& hidlCaps, V3_0::ErrCode errCode) {
+                if (errCode != V3_0::ErrCode::OK) {
+                    ret = static_cast<int>(errCode);
+                    return;
+                }
+                if (!flattenCacaoCapsV31(caps.data, hidlCaps)) {
+                    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+                        "getCaps: V3.1 vec size exceeds 128");
+                    ret = -0x6f;
+                }
+            });
+
+        if (!hidlRet.isOk()) {
+            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+                "hidl getCaps error: %s", hidlRet.description().c_str());
+            ret = -0x6f;
+        }
+    }
+
+    if (ret >= 0) {
+        caps.serialize(&sd);
+        ret = 0;
+    }
+
+    pthread_mutex_unlock(&mLock);
+
+    // error clamp
+    if (ret != -0x6e) {
+        if (ret >= 0) {
+            ret = 0;
+        } else {
+            ret = -0x80000000;
+        }
+    }
+    return ret;
+}
+
+// ── getJpegBufferSize ────────────────────────────────────
+int CacaoService::getJpegBufferSize(cacao::ImageSize size) {
+    pthread_mutex_lock(&mLock);
+
+    int jpegSize = 0;
+    int ret = 0;
+
+    if (mService == NULL) {
+        pthread_mutex_unlock(&mLock);
+        return -0x80000000;
+    }
+
+    // 呼叫 HIDL V3.0 getJpegBufferSize(ImageSize const&, callback(uint32_t, ErrCode))
+    // vtable[0x58]: 傳入相機影像大小後，透過 callback 回傳 JPEG buffer 大小（bytes）
+    V3_0::ImageSize hidlSize;
+    hidlSize.width  = size.width;
+    hidlSize.height = size.height;
+
+    auto hidlRet = mService->getJpegBufferSize(
+        hidlSize,  // BpHwCacao takes const ImageSize&
+        [&](uint32_t jpegBufSize, V3_0::ErrCode errCode) {
+            if (errCode != V3_0::ErrCode::OK) {
+                ret = static_cast<int>(errCode);
+                return;
+            }
+            jpegSize = static_cast<int>(jpegBufSize);
+        });
+
+    if (!hidlRet.isOk()) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "hidl getJpegBufferSize error: %s", hidlRet.description().c_str());
+        ret = -0x6f;
+    }
+
+    pthread_mutex_unlock(&mLock);
+    return (ret >= 0) ? jpegSize : ret;
+}
+
+// ── onTransact ───────────────────────────────────────────
+status_t CacaoService::onTransact(uint32_t code, const Parcel& data,
+                                  Parcel* reply, uint32_t flags) {
+    // 原始 .so: 只對 tx code 1 (connect) 做權限檢查
+    if (code == 1) {
+        pid_t callingPid = IPCThreadState::self()->getCallingPid();
+        pid_t servicePid = getServicePid();
+        if (callingPid != servicePid) {
+            static const String16 sPermCamera("android.permission.CAMERA");
+            if (!checkCallingPermission(sPermCamera)) {
+                return -1;
+            }
+        }
+    }
+    return BnCacaoService::onTransact(code, data, reply, flags);
+}
+
+// ── registerClient ───────────────────────────────────────
+void CacaoService::registerClient(const sp<Client>& client) {
+    pthread_mutex_lock(&mClientLock);
+    if (client != NULL) {
+        mClients.push_back(client);
+        IInterface::asBinder(client)->linkToDeath(this);
+    }
+    pthread_mutex_unlock(&mClientLock);
+}
+
+// ── unregisterClient ─────────────────────────────────────
+void CacaoService::unregisterClient(const sp<IBinder>& binder) {
+    pthread_mutex_lock(&mClientLock);
+    for (List<sp<Client>>::iterator it = mClients.begin();
+         it != mClients.end(); ++it) {
+        if (IInterface::asBinder(*it) == binder) {
+            binder->unlinkToDeath(this);
+            it->clear();
+            mClients.erase(it);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&mClientLock);
+}
+
+// ── binderDied ───────────────────────────────────────────
+void CacaoService::binderDied(const wp<IBinder>& who) {
+    sp<IBinder> promoted = who.promote();
+    unregisterClient(promoted);
+}
+
+// ── onRegistration (IServiceNotification) ────────────────
+Return<void> CacaoService::onRegistration(
+    const hardware::hidl_string& /*fqName*/,
+    const hardware::hidl_string& /*name*/,
+    bool /*preexisting*/) {
+    getInterfaces();
+    return ::android::hardware::Void();
+}
+
+// ── getInterfaces ────────────────────────────────────────
+void CacaoService::getInterfaces() {
+    using provider_V1_0::IVendorSomcCameraProvider;
+    sp<IVendorSomcCameraProvider> provider = IVendorSomcCameraProvider::getService();
+    if (provider == NULL) return;
+
+    provider->linkToDeath(this, 0);
+
+    provider->getCacaoInterface_V3_0(
+        [&](::android::hardware::camera::common::V1_0::Status /*status*/,
+            const sp<V3_0::ICacao>& cacaoService) {
+            mService = cacaoService;
+        });
+
+    if (mService != NULL) {
+        mServiceV31 = V3_1::ICacao::castFrom(mService);
+    }
+}
+
+// ── serviceDied (hidl_death_recipient) ───────────────────
+void CacaoService::serviceDied(uint64_t cookie,
+                               const wp<hidl::base::V1_0::IBase>& /*who*/) {
+    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "serviceDied");
+
+    mRetryCount++;
+    if (mRetryCount >= 19) {
+        // 原始 .so: 在 retry count >= 0x13 時 abort
+        abort();
+    }
+
+    pthread_mutex_lock(&mClientLock);
+    for (List<sp<Client>>::iterator it = mClients.begin();
+         it != mClients.end(); ++it) {
+        if (*it != NULL) {
+            (*it)->serviceDied();
+        }
+    }
+    pthread_mutex_unlock(&mClientLock);
+}
+
+// ════════════════════════════════════════════════════════════
+// CacaoService::Client
+// ════════════════════════════════════════════════════════════
+
+CacaoService::Client::Client(const sp<CacaoService>& service,
+                              const sp<ICacaoClient>& client,
+                              int callingPid) {
+    pthread_mutex_init(&mMutexDisconnect, NULL);
+    pthread_mutex_init(&mMutexClient, NULL);
+    pthread_mutex_init(&mMutexRequest, NULL);
+
+    mService = service;
+    mClient = client;
+    mCallingPid = callingPid;
+    mDisconnected = 0;
+
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG,
+        "Client::Client pid=%d", callingPid);
+
+    mProcess = cacao::ProcessFactoryInternal::createProcess();
+    if (mProcess != NULL) {
+        // ICacaoGateway::subscribeEvents(this as ICBProcessEventListener, cookie=0)
+        static_cast<cacao::ICacaoGateway*>(mProcess)->subscribeEvents(this, 0);
+    }
+}
+
+CacaoService::Client::~Client() {
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG,
+        "Client::~Client pid=%d", mCallingPid);
+
+    mDisconnected = 1;
+    disconnect();
+
+    pthread_mutex_destroy(&mMutexRequest);
+    pthread_mutex_destroy(&mMutexClient);
+    pthread_mutex_destroy(&mMutexDisconnect);
+}
+
+// ── disconnect ───────────────────────────────────────────
+void CacaoService::Client::disconnect() {
+    pthread_mutex_lock(&mMutexDisconnect);
+
+    pid_t callingPid = IPCThreadState::self()->getCallingPid();
+    if (callingPid != mCallingPid && callingPid != getpid()) {
+        pthread_mutex_unlock(&mMutexDisconnect);
+        return;
+    }
+
+    if (mProcess != NULL) {
+        // ICacaoGateway D0 dtor — 刪除 gateway
+        delete static_cast<cacao::ICacaoGateway*>(mProcess);
+        mProcess = NULL;
+    }
+
+    // 排空 request list
+    pthread_mutex_lock(&mMutexRequest);
+    List<Request*>::iterator it = mRequestList.begin();
+    while (it != mRequestList.end()) {
+        Request* req = *it;
+        it = mRequestList.erase(it);
+        if (req != NULL) {
+            delete req;
+        }
+    }
+    pthread_mutex_unlock(&mMutexRequest);
+
+    if (mDisconnected == 0) {
+        pthread_mutex_lock(&mMutexClient);
+        sp<CacaoService> service = mService;
+        if (service != NULL) {
+            service->unregisterClient(IInterface::asBinder(mClient));
+        }
+        mClient = NULL;
+        pthread_mutex_unlock(&mMutexClient);
+    }
+
+    pthread_mutex_unlock(&mMutexDisconnect);
+}
+
+// ── start ────────────────────────────────────────────────
+int CacaoService::Client::start(const sp<IMemory>& /*mem*/,
+                                cacao::ISerialize::SerializedData sd) {
+    pthread_mutex_lock(&mMutexDisconnect);
+
+    int ret;
+    if (mProcess == NULL) {
+        ret = -0x80000000;
+    } else {
+        cacao::ProcessModeBase* mode = cacao::ProcessFactoryInternal::createMode(&sd);
+        if (mode == NULL) {
+            ret = -0x80000000;
+        } else {
+            ret = static_cast<cacao::ICacaoGateway*>(mProcess)->start(mode);
+            // error clamp
+            if (ret != -0x6e) {
+                if (ret >= 0) ret = 0;
+                else ret = -0x80000000;
+            }
+            delete mode;
+        }
+    }
+
+    pthread_mutex_unlock(&mMutexDisconnect);
+    return ret;
+}
+
+// ── stop ─────────────────────────────────────────────────
+int CacaoService::Client::stop() {
+    pthread_mutex_lock(&mMutexDisconnect);
+
+    int ret;
+    if (mProcess == NULL) {
+        ret = -0x80000000;
+    } else {
+        ret = static_cast<cacao::ICacaoGateway*>(mProcess)->stop();
+        // error clamp
+        if (ret != -0x6e) {
+            if (ret >= 0) ret = 0;
+            else ret = -0x80000000;
+        }
+    }
+
+    pthread_mutex_unlock(&mMutexDisconnect);
+    return ret;
+}
+
+// ── setConfig ────────────────────────────────────────────
+int CacaoService::Client::setConfig(int configId, const sp<IMemory>& /*mem*/,
+                                    cacao::ISerialize::SerializedData sd) {
+    pthread_mutex_lock(&mMutexDisconnect);
+
+    int ret;
+    if (mProcess == NULL) {
+        ret = -0x80000000;
+    } else {
+        cacao::ProcessConfigBase* cfg =
+            cacao::ProcessFactoryInternal::createConfig(configId, &sd);
+        if (cfg == NULL) {
+            ret = -0x80000000;
+        } else {
+            ret = static_cast<cacao::ICacaoGateway*>(mProcess)->setConfig(cfg);
+            delete cfg;
+            // error clamp
+            if (ret != -0x6e) {
+                if (ret >= 0) ret = 0;
+                else ret = -0x80000000;
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&mMutexDisconnect);
+    return ret;
+}
+
+// ── getConfig ────────────────────────────────────────────
+int CacaoService::Client::getConfig(int configId, const sp<IMemory>& /*mem*/,
+                                    cacao::ISerialize::SerializedData sd) {
+    pthread_mutex_lock(&mMutexDisconnect);
+
+    int ret;
+    if (mProcess == NULL) {
+        ret = -0x80000000;
+    } else {
+        cacao::ProcessConfigBase* cfg =
+            cacao::ProcessFactoryInternal::createConfig(configId, &sd);
+        if (cfg == NULL) {
+            ret = -0x80000000;
+        } else {
+            ret = static_cast<cacao::ICacaoGateway*>(mProcess)->getConfig(cfg);
+            if (ret >= 0) {
+                // 原始 .so: cfg->vtable[+0x20](cfg, &sd) — serialize
+                ret = toSerializable(cfg)->serialize(&sd);
+            }
+            delete cfg;
+            // error clamp
+            if (ret != -0x6e) {
+                if (ret >= 0) ret = 0;
+                else ret = -0x80000000;
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&mMutexDisconnect);
+    return ret;
+}
+
+// ── process (with ImageBuf bufs) ─────────────────────────
+int CacaoService::Client::process(const sp<IMemory>& paramMem,
+                                  cacao::ISerialize::SerializedData paramSd,
+                                  Vector<cacao::ImageBuf*> bufs,
+                                  const sp<IMemory>& /*resultMem*/,
+                                  cacao::ISerialize::SerializedData resultSd,
+                                  int flags,
+                                  const sp<ICacaoProcessCallback>& callback) {
+    pthread_mutex_lock(&mMutexDisconnect);
+
+    int ret = 0;
+    if (mProcess == NULL) {
+        pthread_mutex_unlock(&mMutexDisconnect);
+        return 0;
+    }
+
+    cacao::ProcessParamBase* param = NULL;
+    if (paramMem != NULL) {
+        param = cacao::ProcessFactoryInternal::createParam(&paramSd);
+        if (param == NULL) {
+            pthread_mutex_unlock(&mMutexDisconnect);
+            return 0;
+        }
+    }
+
+    cacao::ProcessResultBase* result = cacao::ProcessFactoryInternal::createResult(&resultSd);
+    if (result == NULL) {
+        if (param != NULL) delete param;
+        pthread_mutex_unlock(&mMutexDisconnect);
+        return 0;
+    }
+
+    // 建立 Request 並插入 list
+    Request* req = new Request(callback, this);
+    req->setBufVector(new Vector<cacao::ImageBuf*>(bufs));
+    req->setResult(result);
+
+    pthread_mutex_lock(&mMutexRequest);
+    mRequestList.push_back(req);
+    pthread_mutex_unlock(&mMutexRequest);
+
+    // 根據 flags (binder==0) 決定呼叫 processAsync 或 process
+    if (flags == 0) {
+        static_cast<cacao::ICacaoGateway*>(mProcess)->processAsync(
+            param, req->getBufVector(), static_cast<cacao::ICBProcessResultListener*>(this), result);
+    } else {
+        static_cast<cacao::ICacaoGateway*>(mProcess)->process(
+            param, static_cast<cacao::ICBProcessResultListener*>(this), result);
+    }
+
+    if (param != NULL) delete param;
+
+    pthread_mutex_unlock(&mMutexDisconnect);
+    return ret;
+}
+
+// ── process (with IBinder) ───────────────────────────────
+int CacaoService::Client::process(const sp<IMemory>& paramMem,
+                                  cacao::ISerialize::SerializedData paramSd,
+                                  const sp<IBinder>& binder,
+                                  const sp<IMemory>& /*resultMem*/,
+                                  cacao::ISerialize::SerializedData resultSd,
+                                  int flags,
+                                  const sp<ICacaoProcessCallback>& callback) {
+    pthread_mutex_lock(&mMutexDisconnect);
+
+    int ret = 0;
+    if (mProcess == NULL) {
+        pthread_mutex_unlock(&mMutexDisconnect);
+        return 0;
+    }
+
+    cacao::ProcessParamBase* param = NULL;
+    if (paramMem != NULL) {
+        param = cacao::ProcessFactoryInternal::createParam(binder, &paramSd);
+        if (param == NULL) {
+            pthread_mutex_unlock(&mMutexDisconnect);
+            return 0;
+        }
+    }
+
+    cacao::ProcessResultBase* result = cacao::ProcessFactoryInternal::createResult(&resultSd);
+    if (result == NULL) {
+        if (param != NULL) delete param;
+        pthread_mutex_unlock(&mMutexDisconnect);
+        return 0;
+    }
+
+    // 建立 Request 並插入 list
+    Request* req = new Request(callback, this);
+    req->setResult(result);
+
+    pthread_mutex_lock(&mMutexRequest);
+    mRequestList.push_back(req);
+    pthread_mutex_unlock(&mMutexRequest);
+
+    if (binder == NULL) {
+        static_cast<cacao::ICacaoGateway*>(mProcess)->processAsync(
+            param, NULL, static_cast<cacao::ICBProcessResultListener*>(this), result);
+    } else {
+        static_cast<cacao::ICacaoGateway*>(mProcess)->process(
+            param, static_cast<cacao::ICBProcessResultListener*>(this), result);
+    }
+
+    if (param != NULL) delete param;
+
+    pthread_mutex_unlock(&mMutexDisconnect);
+    return ret;
+}
+
+// ── cancel ───────────────────────────────────────────────
+int CacaoService::Client::cancel(int /*cookie*/) {
+    if (mProcess == NULL) {
+        return -0x80000000;
+    }
+    int ret = static_cast<cacao::ICacaoGateway*>(mProcess)->cancel(NULL);
+    // error clamp
+    if (ret != -0x6e) {
+        if (ret >= 0) ret = 0;
+        else ret = -0x80000000;
+    }
+    return ret;
+}
+
+// ── onHandleEvent (ICBProcessEventListener) ───────────────────────────────
+void CacaoService::Client::onHandleEvent(const cacao::ProcessEventBase* ev) {
+    pthread_mutex_lock(&mMutexClient);
+    sp<ICacaoClient> client = mClient;
+    pthread_mutex_unlock(&mMutexClient);
+
+    if (client == NULL) return;
+
+    // 取得事件序列化大小
+    int eventType = ev->getType();
+    unsigned int dataSize = ev->getSerializedSize();
+
+    sp<IMemory> mem = allocMemory(dataSize);
+    if (mem == NULL) return;
+
+    cacao::ISerialize::SerializedData sd;
+    memset(&sd, 0, sizeof(sd));
+    makeSerializedData(mem, &sd);
+
+    ev->serialize(&sd);
+
+    client->notifyEvent(eventType, mem, sd);
+}
+
+// ── onHandleProgress ─────────────────────────────────────
+void CacaoService::Client::onHandleProgress(const cacao::ProcessResultBase* result) {
+    if (result == NULL) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "onHandleProgress: result is null %d", 0);
+        return;
+    }
+
+    sp<IMemory> callbackMem;
+    sp<ICacaoProcessCallback> callbackSp;
+    cacao::ISerialize::SerializedData sd;
+    memset(&sd, 0, sizeof(sd));
+
+    pthread_mutex_lock(&mMutexRequest);
+
+    // 搜尋 request list 找到匹配的 request
+    for (List<Request*>::iterator it = mRequestList.begin();
+         it != mRequestList.end(); ++it) {
+        Request* req = *it;
+        if (req != NULL && req->getResult() == result) {
+            callbackSp = req->getCallback();
+            pthread_mutex_unlock(&mMutexRequest);
+
+            // 分配記憶體並序列化 result
+            unsigned int dataSize = toSerializable(const_cast<cacao::ProcessResultBase*>(result))->getSerializedSize();
+            sp<IMemory> mem = allocMemory(dataSize);
+            callbackMem = mem;
+            if (callbackMem != NULL) {
+                makeSerializedData(callbackMem, &sd);
+                toSerializable(const_cast<cacao::ProcessResultBase*>(result))->serialize(&sd);
+            }
+            goto done;
+        }
+    }
+
+    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+        "onHandleProgress: request not found %d", 0);
+    pthread_mutex_unlock(&mMutexRequest);
+
+done:
+    if (callbackMem == NULL) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "onHandleProgress: alloc failed");
+    } else {
+        if (callbackSp != NULL) {
+            callbackSp->notifyProgress(callbackMem, sd);
+        }
+    }
+}
+
+// ── onHandleResult ───────────────────────────────────────
+void CacaoService::Client::onHandleResult(const cacao::ProcessResultBase* result) {
+    if (result == NULL) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "onHandleResult: result is null %d", 0);
+        return;
+    }
+
+    sp<IMemory> callbackMem;
+    sp<ICacaoProcessCallback> resultCallbackSp;
+    cacao::ISerialize::SerializedData sd;
+    memset(&sd, 0, sizeof(sd));
+    int errCode = 0;
+    Request* reqResult = NULL;
+
+    pthread_mutex_lock(&mMutexRequest);
+
+    // 搜尋並從 list 移除匹配的 request
+    for (List<Request*>::iterator it = mRequestList.begin();
+         it != mRequestList.end(); ++it) {
+        Request* req = *it;
+        if (req != NULL && req->getResult() == result) {
+            resultCallbackSp = req->getCallback();
+            errCode = req->getErrCode();
+            reqResult = req;
+            mRequestList.erase(it);
+            pthread_mutex_unlock(&mMutexRequest);
+
+            // 分配記憶體並序列化 result
+            unsigned int dataSize = toSerializable(const_cast<cacao::ProcessResultBase*>(result))->getSerializedSize();
+            sp<IMemory> mem = allocMemory(dataSize);
+            callbackMem = mem;
+            if (callbackMem != NULL) {
+                makeSerializedData(callbackMem, &sd);
+                toSerializable(const_cast<cacao::ProcessResultBase*>(result))->serialize(&sd);
+            }
+            goto done;
+        }
+    }
+
+    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+        "onHandleResult: request not found %d", 0);
+    pthread_mutex_unlock(&mMutexRequest);
+
+done:
+    if (callbackMem == NULL) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "onHandleResult: alloc failed");
+    } else {
+        if (resultCallbackSp != NULL) {
+            resultCallbackSp->notifyResult(callbackMem, sd, nullptr);
+        }
+    }
+
+    if (reqResult != NULL) {
+        delete reqResult;
+    }
+}
+
+// ── allocMemory ──────────────────────────────────────────
+sp<IMemory> CacaoService::Client::allocMemory(unsigned int size) {
+    sp<MemoryHeapBase> heap = new MemoryHeapBase(size);
+    sp<MemoryBase> mem = new MemoryBase(heap, 0, size);
+    return mem;
+}
+
+// ── freeMemory ───────────────────────────────────────────
+void CacaoService::Client::freeMemory(sp<IMemory>& mem) {
+    if (mem != NULL) {
+        mem.clear();
+    }
+}
+
+// ── makeSerializedData ───────────────────────────────────
+void CacaoService::Client::makeSerializedData(const sp<IMemory>& mem,
+                                              cacao::ISerialize::SerializedData* sd) {
+    if (sd != NULL && mem != NULL) {
+        sd->size = mem->size();
+        sd->data = mem->unsecurePointer();
+    }
+}
+
+// ── serviceDied (Client) ─────────────────────────────────
+void CacaoService::Client::serviceDied() {
+    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Client::serviceDied");
+
+    pthread_mutex_lock(&mMutexDisconnect);
+    if (mProcess != NULL) {
+        static_cast<cacao::ICacaoGateway*>(mProcess)->serviceDied();
+    }
+    pthread_mutex_unlock(&mMutexDisconnect);
+}
+
+// ════════════════════════════════════════════════════════════
+// CacaoService::Client::Request
+// ════════════════════════════════════════════════════════════
+
+CacaoService::Client::Request::Request(const sp<ICacaoProcessCallback>& cb,
+                                       cacao::ICBProcessResultListener* listener)
+    : mCallback(cb)
+    , mListener(listener)
+    , mBufVector(NULL)
+    , mResult(NULL)
+{
+}
+
+CacaoService::Client::Request::~Request() {
+    mCallback.clear();
+    if (mBufVector != NULL) {
+        delete mBufVector;
+        mBufVector = NULL;
+    }
+    if (mResult != NULL) {
+        delete mResult;
+        mResult = NULL;
+    }
+}
+
+void CacaoService::Client::Request::onHandleProgress(const cacao::ProcessResultBase* result) {
+    if (mListener != NULL) {
+        mListener->onProgress(0);
+    }
+}
+
+void CacaoService::Client::Request::onHandleResult(const cacao::ProcessResultBase* result) {
+    if (mListener != NULL) {
+        mListener->onResult(PAL_ERR_OK);
+    }
+}
+
+void CacaoService::Client::Request::setBufVector(Vector<cacao::ImageBuf*>* bufs) {
+    mBufVector = bufs;
+}
+
+void CacaoService::Client::Request::setResult(cacao::ProcessResultBase* result) {
+    mResult = result;
+}
+
+} // namespace android
+
+// ════════════════════════════════════════════════════════════
+// cacao::Caps
+// ════════════════════════════════════════════════════════════
+
+namespace cacao {
+
+Caps::Caps() {
+    memset(data, 0, sizeof(data));
+}
+
+Caps::~Caps() {
+}
+
+int Caps::serialize(ISerialize::SerializedData* sd) {
+    if (sd == NULL || sd->data == NULL) return -0x67;
+    if (sd->offset + 0x262cU > sd->size) return -0x67;
+    // 原始 .so: 4 段 memcpy，總計 0x262c bytes
+    uint8_t* dst = (uint8_t*)sd->data + sd->offset;
+    memcpy(dst, data, 0x262c);
+    sd->offset += 0x262c;
+    return 0;
+}
+
+int Caps::deserialize(ISerialize::SerializedData* sd) {
+    if (sd == NULL || sd->data == NULL) return -0x67;
+    if (sd->offset + 0x262cU > sd->size) return -0x67;
+    uint8_t* src = (uint8_t*)sd->data + sd->offset;
+    memcpy(data, src, 0x262c);
+    sd->offset += 0x262c;
+    return 0;
+}
+
+// ════════════════════════════════════════════════════════════
+// cacao::ProcessFactoryInternal
+// ════════════════════════════════════════════════════════════
+
+ICacaoGateway* ProcessFactoryInternal::createProcess() {
+    return ProcessCtrlGatewayFactory::create();
+}
+
+ProcessModeBase* ProcessFactoryInternal::createMode(ISerialize::SerializedData* sd) {
+    return ProcessCtrlGatewayFactory::createMode(sd);
+}
+
+ProcessParamBase* ProcessFactoryInternal::createParam(ISerialize::SerializedData* sd) {
+    return ProcessCtrlGatewayFactory::createParam(sd);
+}
+
+ProcessParamBase* ProcessFactoryInternal::createParam(
+    const android::sp<android::IBinder>& binder,
+    ISerialize::SerializedData* sd) {
+    return ProcessCtrlGatewayFactory::createParam(binder, sd);
+}
+
+ProcessResultBase* ProcessFactoryInternal::createResult(ISerialize::SerializedData* sd) {
+    return ProcessCtrlGatewayFactory::createResult(sd);
+}
+
+ProcessConfigBase* ProcessFactoryInternal::createConfig(unsigned int configId,
+                                           ISerialize::SerializedData* sd) {
+    return ProcessCtrlGatewayFactory::createConfig(configId, sd);
+}
+
+} // namespace cacao
+
+// ════════════════════════════════════════════════════════════
+// instantiate (C linkage)
+// ════════════════════════════════════════════════════════════
+
+extern "C" void instantiate() {
+    android::CacaoService::instantiate();
+}

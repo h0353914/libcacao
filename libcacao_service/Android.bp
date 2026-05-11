@@ -1,0 +1,49 @@
+// libcacao_service_real — CacaoService 實作
+// 依照 libcacao_service.so 反編譯結果重建
+
+cc_library_headers {
+    name: "libcacao_service_headers",
+
+    defaults: ["libcacao_common_defaults"],
+
+    export_include_dirs: ["include"],
+}
+
+cc_library_shared {
+    name: "libcacao_service",
+    stem: "libcacao_service",
+
+    defaults: ["libcacao_32bit_build_defaults"],
+
+    srcs: [
+        "src/CacaoService.cpp",
+    ],
+
+    header_libs: [
+        "libcacao_service_headers",
+        "libcacao_process_ctrl_gateway_headers",
+        "libbase_headers",
+    ],
+
+    shared_libs: [
+        "android.hidl.base@1.0",
+        "android.hidl.manager@1.0",
+        "android.hardware.camera.common@1.0",
+        "android.hardware.camera.provider@2.4",
+        "android.hardware.graphics.allocator@2.0",
+        "libhidlbase",
+        "libandroid",
+        "libutils",
+        "libui",
+        "libbinder",
+        "libcutils",
+        "liblog",
+        "libcacao_client",
+        "libcacao_process_ctrl_gateway",
+        "vendor.somc.hardware.camera.provider@1.0",
+        "vendor.somc.hardware.camera.cacao@3.0",
+        "vendor.somc.hardware.camera.cacao@3.1",
+    ],
+
+    version_script: "libcacao_service.map.txt",
+}

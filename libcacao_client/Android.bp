@@ -1,0 +1,74 @@
+// libcacao_client — CacaoClient 完整實作（含 A14 相容性修正）
+// 32-bit 與 64-bit: 從 C++ 源碼編譯（100% 參照原始 .so 邏輯）
+// 反編譯來源: tools_Libcacao/refs/so_32/libcacao_client.so (ARM 32-bit)
+//             tools_Libcacao/refs/so_64/libcacao_client.so (ARM 64-bit)
+// ─── 32-bit 和 64-bit：從 C++ 源碼編譯 ────────────────────
+
+cc_library_headers {
+    name: "libcacao_client_headers",
+
+    defaults: ["libcacao_common_defaults"],
+
+    export_include_dirs: ["include"],
+}
+
+cc_library_shared {
+    name: "libcacao_client",
+    stem: "libcacao_client",
+
+    defaults: ["libcacao_common_defaults"],
+
+    compile_multilib: "both",
+
+    srcs: [
+        "src/ICacaoService.cpp",
+        "src/ICacao.cpp",
+        "src/ICacaoClient.cpp",
+        "src/ICacaoProcessCallback.cpp",
+        "src/Cacao.cpp",
+        "src/SharedBuffer_ObjectBase.cpp",
+        "src/ImageBuf.cpp",
+        "src/ProcessFactory.cpp",
+    ],
+
+    header_libs: [
+        "libcacao_client_headers",
+        "libcacao_service_headers",
+        "libcacao_process_ctrl_gateway_headers",
+    ],
+
+    shared_libs: [
+        "libbinder",
+        "libcutils",
+        "libutils",
+        "liblog",
+        "libhardware",
+        "libhidlbase",
+        "libandroid",
+        "android.hardware.graphics.mapper@2.0",
+        "android.hardware.graphics.allocator@2.0",
+        "android.hardware.graphics.common@1.0",
+        "android.hidl.base@1.0",
+        "android.hidl.manager@1.0",
+        "libcacao_pal",
+    ],
+
+    cflags: [
+        "-Os",
+        "-Wno-unused-parameter",
+    ],
+
+    target: {
+        android_arm: {
+            version_script: "libcacao_client_arm.map.txt",
+        },
+        android_arm64: {
+            version_script: "libcacao_client_arm64.map.txt",
+        },
+    },
+
+    lto: {
+        never: true,
+    },
+
+}

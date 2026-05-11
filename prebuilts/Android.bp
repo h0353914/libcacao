@@ -1,0 +1,92 @@
+// Sony 專有函式庫 prebuilt（libcacao_process_ctrl_gateway_real 依賴）
+
+cc_prebuilt_library_shared {
+    name: "libcacao_pal",
+    stem: "libcacao_pal",
+
+    compile_multilib: "both",
+    arch: {
+        arm: {
+            srcs: ["lib/libcacao_pal.so"],
+        },
+        arm64: {
+            srcs: ["lib64/libcacao_pal.so"],
+        },
+    },
+
+    strip: { none: true },
+    check_elf_files: false,
+    prefer: true,
+    stl: "none",
+
+    vendor: false,
+    vendor_available: false,
+    product_specific: false,
+    product_available: false,
+}
+
+cc_prebuilt_library_shared {
+    name: "vendor.somc.hardware.camera.provider@1.0",
+    stem: "vendor.somc.hardware.camera.provider@1.0",
+
+    compile_multilib: "32",
+    arch: {
+        arm: {
+            srcs: ["lib/vendor.somc.hardware.camera.provider@1.0.so"],
+        },
+    },
+
+    strip: { none: true },
+    check_elf_files: false,
+    prefer: true,
+    stl: "none",
+
+    vendor: false,
+    vendor_available: false,
+    product_specific: false,
+    product_available: false,
+}
+
+cc_prebuilt_library_shared {
+    name: "vendor.somc.hardware.camera.cacao@3.0",
+    stem: "vendor.somc.hardware.camera.cacao@3.0",
+
+    compile_multilib: "32",
+    arch: {
+        arm: {
+            srcs: ["lib/vendor.somc.hardware.camera.cacao@3.0.so"],
+        },
+    },
+
+    strip: { none: true },
+    check_elf_files: false,
+    prefer: true,
+    stl: "none",
+
+    vendor: false,
+    vendor_available: false,
+    product_specific: false,
+    product_available: false,
+}
+
+cc_prebuilt_library_shared {
+    name: "vendor.somc.hardware.camera.cacao@3.1",
+    stem: "vendor.somc.hardware.camera.cacao@3.1",
+
+    compile_multilib: "32",
+    arch: {
+        arm: {
+            srcs: ["lib/vendor.somc.hardware.camera.cacao@3.1.so"],
+        },
+    },
+
+    strip: { none: true },
+    check_elf_files: false,
+    prefer: true,
+    stl: "none",
+
+    vendor: false,
+    vendor_available: false,
+    product_specific: false,
+    product_available: false,
+}

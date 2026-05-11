@@ -1,0 +1,68 @@
+// libimageprocessorjni — BypassCamera JNI 橋接實作（C++ 源碼版）
+// 依照 tools_Libcacao/refs/so_32 及 so_64 的 Ghidra 反編譯結果 100% 重建
+// 此模組直接產生最終的 libimageprocessorjni.so，不再經過 wrapper 轉發
+
+cc_library_headers {
+    name: "libimageprocessorjni_headers",
+
+    defaults: ["libcacao_common_defaults"],
+
+    export_include_dirs: ["include"],
+}
+
+cc_library_shared {
+    name: "libimageprocessorjni",
+    stem: "libimageprocessorjni",
+
+    defaults: ["libcacao_common_defaults"],
+
+    compile_multilib: "both",
+
+    srcs: [
+        "src/BypassCamera.cpp",
+        "src/BypassCameraPhoto.cpp",
+        "src/BypassCameraVideo.cpp",
+        "src/BypassCameraBurst.cpp",
+        "src/BypassCameraBurstBufferManager.cpp",
+        "src/Caps.cpp",
+    ],
+    // ProcessCtrlGatewayBase.h 來自 libcacao_process_ctrl_gateway 的標頭路徑
+    header_libs: [
+        "libimageprocessorjni_headers",
+        "libcacao_client_headers",
+        "libcacao_service_headers",
+        "libcacao_process_ctrl_gateway_headers",
+        "jni_headers",
+        "libgui_headers",
+        "libbinder_headers",
+        "libutils_headers",
+    ],
+
+    // 依照原始 prebuilt so 的 NEEDED 清單設定依賴
+    shared_libs: [
+        "libcacao_client",
+        "libbinder",
+        "libgui",
+        "libutils",
+        "libcutils",
+        "liblog",
+        "libdl",
+        "android.hardware.graphics.allocator@2.0",
+    ],
+
+    stl: "c++_shared",
+
+    cflags: [
+        "-Wall",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-sign-compare",
+        "-fvisibility=default",
+        "-DLIBCACAO_SOONG_BUILD",
+    ],
+
+    ldflags: ["-Wl,--no-as-needed"],
+
+    version_script: "libimageprocessorjni.map.txt",
+
+}

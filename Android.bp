@@ -1,0 +1,38 @@
+// Libcacao 頂層 Android.bp — 定義各模組共用的 cc_defaults
+// libcacao_process_ctrl_gateway 與 libcacao_service 均為 32-bit only，
+// 且使用相同的編譯旗標（依照對應 prebuilt .so 的反編譯驗證）。
+
+cc_defaults {
+    name: "libcacao_common_defaults",
+
+    vendor: false,
+    vendor_available: false,
+    product_specific: false,
+    product_available: false,
+}
+
+cc_defaults {
+    name: "libcacao_32bit_build_defaults",
+
+    defaults: ["libcacao_common_defaults"],
+
+    compile_multilib: "32",
+    stl: "c++_shared",
+    allow_undefined_symbols: true,
+
+    cflags: [
+        "-Os",
+        "-fno-function-sections",
+        "-fno-data-sections",
+        "-fno-inline-small-functions",
+        "-fno-inline-functions",
+        "-fno-slp-vectorize",
+        "-fno-vectorize",
+        "-mfpu=vfpv3-d16",
+        "-ftrivial-auto-var-init=uninitialized",
+    ],
+
+    ldflags: [
+        "-Wl,--pack-dyn-relocs=none",
+    ],
+}
