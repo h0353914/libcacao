@@ -19,7 +19,6 @@ cc_library_shared {
         "src/ProcessCtrlGatewayBase.cpp",
         "src/ProcessCtrlGateway.cpp",
         "src/aeabi_helpers.c",
-        "src/aeabi_uldivmod.S",
     ],
 
     header_libs: [

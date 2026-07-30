@@ -983,6 +983,37 @@ void ProcessCtrlGateway::onHandleResultInternal(ResultMsg* msg) {
                 processAsyncInternal(PROCESS_TYPE_8);
                 break;
             }
+            // [動態驗證確認/與原版一致，非我方 bug] 反編譯 so_32 @ 0x1a8ac 確認這裡
+            // 100% 逐位元組相同：mode==0（例如 120fps 連續慢動作/HFR）時
+            // `mode-1>2`（unsigned underflow）恆真，直接 break，不會走到下面
+            // notifyResult(mVideoReq,...)。
+            //
+            // [20260727 session 追加動態驗證] 用裝置端 log 直接確認了完整因果
+            // 鏈：nativeChangeToVideoMode 收到的 mode 值確實是 0（Java 端
+            // getVideoMode() 對 SLOW_MOTION capturing mode 強制回傳
+            // VideoStabilizer.OFF，對應 VideoMode.NORMAL=0）；cald 端確實有
+            // 完成 startVideoRec(type=11) 這個請求並送回一筆
+            // result[5]==0 的訊息，但因為當下 mMode(this+0x5dc)==0 命中這裡
+            // 的 exclusion，notifyResult(mVideoReq,...) 被跳過，之後
+            // onHandleResultInternal 再也沒有被呼叫過——也就是說
+            // VideoStartSuperSlowRecCallback::onHandleResult 永遠不會觸發，
+            // Java 端等不到「錄影已開始」的回呼，最終逾時。這個 mode==0
+            // exclusion 本身已用 Ghidra 反編譯字節級比對確認與原版完全一致，
+            // 不是重建引入的落差，不應更動這裡的判斷式。
+            //
+            // 但同一份反編譯結構下，原版裝置實測（同一台裝置、同一組
+            // test_camera.py 測試腳本、同樣的「先進入 960fps 預設 → 再切到
+            // 120fps」UI 路徑）大多數情況下能成功完成錄影，代表原版當下
+            // cald 對這個 request 的回覆很可能不是 result[5]==0（命中這個
+            // exclusion），而是直接以 result[5]==8 回覆（不受這個 exclusion
+            // 影響，直接 fallthrough 到下面完成）。這代表 result[5] 的值本身
+            // 是 vendor cald 內部決定、對這次 request 當下狀態敏感的
+            // non-deterministic 結果，不是由這裡的程式碼決定。換句話說，
+            // slow_120 卡住的關鍵不在這個 exclusion 判斷式本身（已確認正確），
+            // 而在「cald 為什麼這次回 result[5]==0 而不是 8」——這是 vendor
+            // 端閉源二進位（cald/HAL provider）內部的決策，Libcacao 四個模組
+            // 的原始碼範圍內沒有能修改這個決策的位置。留給後續：若要繼續
+            // 追查，需要對 vendor cald 本身做動態分析（不在 Libcacao 範圍）。
             if (THIS_U32(0x5dc) - 1 > 2) break;
             [[fallthrough]];
         case 8:
@@ -2116,11 +2147,12 @@ int ProcessCtrlGateway::createNativeWindow(ProcessCtrlVideoRecParam* param) {
     }
 
     {
-        // 對應 so_32_a200 binary patch:
-        // 原版 .so 以 Android 8.1 sizeof(Surface)=0x788，a200 修補為 0x2500
-        // 本機編譯 sizeof(Surface) 可能與 run-time libgui.so 不同（A14 實際為 0x2500）
-        // 強制分配 0x2500 bytes 以防堆積損壞
-        android::Surface* surf_raw = reinterpret_cast<android::Surface*>(::operator new(0x2500));
+        // [已確認] 反編譯 tools_Libcacao/refs/so_32/libcacao_process_ctrl_gateway.so
+        // 的 ProcessCtrlGateway::createNativeWindow（真實位址，非本檔案位址）：
+        // `_Znwj(0x788)` — 這台 a9 (poplar_kddi) 裝置上 sizeof(Surface) 就是 0x788，
+        // 與舊註解引用的「A14 實際為 0x2500」「so_32_a200 binary patch」都是別的
+        // 裝置/版本的數值，不適用於這裡。改用 a9 反編譯確認的 0x788。
+        android::Surface* surf_raw = reinterpret_cast<android::Surface*>(::operator new(0x788));
         new(surf_raw) android::Surface(gbp, true);
         sp<android::Surface> surface(surf_raw);
 

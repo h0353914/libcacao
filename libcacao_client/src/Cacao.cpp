@@ -65,9 +65,9 @@
 
 namespace {
 
-// 取得物件的 secondary ISerializable*（位於 this + 4）
+// 取得物件的 secondary ISerializable*（位於 this + sizeof(void*)）
 inline cacao::ISerializable* toSerializable(void* obj) {
-    // secondary vtable at offset +4（ProcessModeBase/ProcessParamBase 之後）
+    // secondary vtable at offset +sizeof(void*)（ProcessModeBase/ProcessParamBase 之後）
     return reinterpret_cast<cacao::ISerializable*>(
         reinterpret_cast<char*>(obj) + sizeof(void*));
 }
@@ -656,11 +656,14 @@ int Cacao::CacaoClient::processAsyncWithBinder(const cacao::ProcessParamBase* pa
 }
 
 // ── cancel ────────────────────────────────────────────────────
-// 原始 .so: mCacao->vtable[0x2c/4](cookie)
-// 0x2c/4 = 11 from start of ICacao vtable = cancel method (after 7 interface methods + 4 base methods)
-// Actually looking at ICacao interface: disconnect(4), start(5), stop(6), setConfig(7), getConfig(8),
-// process-buf(9), process-binder(10), cancel(11 if it exists)
-// But from the Ghidra BpCacao::cancel code, it uses tx code 8
+// [已確認/已修正] 反編譯 tools_Libcacao/refs/so_32/libcacao_client.so 的
+// android::BpCacao::cancel(int) 確認：它是透過 IBinder::transact(code=8, ...)
+// 送出的 Binder IPC 呼叫，不是對 mCacao 這個 C++ 物件本身做任意 vtable offset
+// 呼叫（先前 vt[0x2c/4] 的寫法完全是猜錯欄位）。ICacao 介面
+// （libcacao_service/include/cacao/ICacao.h）已經正確宣告
+// `virtual int cancel(int cookie) = 0;`，而 ICacao.cpp 裡的 BpCacao::cancel
+// 實作本身就是用 transact(8, ...)——所以只需要透過正常的 C++ virtual dispatch
+// 呼叫 mCacao->cancel(cookie) 即可，不需要（也不應該）手動戳 vtable。
 int Cacao::CacaoClient::cancel(void* cookie)
 {
     pthread_mutex_lock(&mLock);
@@ -668,11 +671,7 @@ int Cacao::CacaoClient::cancel(void* cookie)
         pthread_mutex_unlock(&mLock);
         return -0x65;
     }
-    // cancel via vtable dispatch at offset 0x2c
-    // equivalent to mCacao->cancel(cookie)
-    typedef int (*CancelFn)(ICacao*, void*);
-    void** vt = *reinterpret_cast<void***>(mCacao.get());
-    int ret = reinterpret_cast<CancelFn>(vt[0x2c / 4])(mCacao.get(), cookie);
+    int ret = mCacao->cancel(static_cast<int>(reinterpret_cast<intptr_t>(cookie)));
     if (ret != 0) {
         if (ret != -0x6e) ret = -0x6f;
     }
@@ -920,8 +919,12 @@ int Cacao::getCaps(const cacao::ProcessCtrlCaps::CameraIndex& camIdx,
                    cacao::Caps* caps)
 {
     getService();
-    if (mService == nullptr) return 0;
-    if (mServicePid == getpid()) return 0;  // same process fallback
+    if (mService == nullptr) {
+        return 0;
+    }
+    if (mServicePid == getpid()) {
+        return 0;  // same process fallback
+    }
     if (caps == nullptr) return -0x67;
 
     cacao::ISerialize::SerializedData sd;
@@ -941,7 +944,9 @@ int Cacao::getCaps(const cacao::ProcessCtrlCaps::CameraIndex& camIdx,
 
     // caps->serialize(&sd): vtable+0x14
     int ret = reinterpret_cast<SerFn>(vt[0x14 / 4])(caps, &sd);
-    if (ret < 0) return ret;
+    if (ret < 0) {
+        return ret;
+    }
 
     // mService->getCaps(camIdx, mem, sd)
     ret = mService->getCaps(camIdx, mem, sd);

@@ -118,6 +118,8 @@ void callVideoCallback(BypassCameraContext* ctx, int type) {
 // ─────────────────────────────────────────────────────
 __attribute__((visibility("hidden")))
 BypassCameraBufferContext::BypassCameraBufferContext() {
+    byBufferPtr    = nullptr;
+    byNativeHandle = nullptr;
     surface        = nullptr;
     pthread_mutex_init(&mutex, nullptr);
     ready          = 0;
@@ -128,6 +130,13 @@ BypassCameraBufferContext::BypassCameraBufferContext() {
 
 __attribute__((visibility("hidden")))
 BypassCameraBufferContext::~BypassCameraBufferContext() {
+    // BufEntry*/ImageBuf* 的實際釋放由
+    // BypassCameraBurstBufferManager_deleteBuffers 負責（透過
+    // BypassCameraPhoto_finalize 呼叫），這裡只清掉容器本身，避免
+    // ctx 整個被銷毀時，若忘了呼叫 finalize 也不會 leak 掉這兩個
+    // SortedVector 物件本身（不重複刪除 value，因為那是 finalize 的責任）。
+    delete byBufferPtr;
+    delete byNativeHandle;
     pthread_mutex_destroy(&mutex);
 }
 
@@ -145,7 +154,7 @@ BypassCameraContext::BypassCameraContext() {
     snapshotReadyResult = nullptr;
     snapshotCb         = nullptr;
     requestCounter     = 0;
-    burstReadyCb       = nullptr;
+    burstResultsById   = nullptr;
     burstPrepareCb     = nullptr;
     burstPrepareResult = nullptr;
     snapshotFreeCb     = nullptr;
@@ -154,7 +163,7 @@ BypassCameraContext::BypassCameraContext() {
     burstFinishResult  = nullptr;
     burstCb            = nullptr;
     _pad1[0] = _pad1[1] = nullptr;
-    videoPrepareSuperSlowCb = nullptr;
+    secondResultsById = nullptr;
     pthread_mutex_init(&photoLock, nullptr);
     photoInitialized   = false;
     shutterDoneSent    = false;
@@ -182,14 +191,15 @@ BypassCameraContext::BypassCameraContext() {
     videoCommandThreadRunning = false;
     videoCommandThread = 0;
 
-    pthread_mutex_init(&videoLock, nullptr);
-    field_BC = 0;
+    // videoSurfaceProducer(sp<IGraphicBufferProducer>) 由其自身預設建構子初始化為 null，
+    // 不需要額外程式碼（原版建構子也只是把它設為 null，等同 sp<T> 的預設行為）
+    burstInitialized = false;
     _pad4[0] = _pad4[1] = _pad4[2] = 0;
     field_C0 = 0;
     field_C4 = 4;
-    field_C8 = 0;
-    field_CC = 0;
-    field_D0 = 0;
+    burstJObj = nullptr;
+    burstMethodId = nullptr;
+    burstSnapshotCb = nullptr;
     cachedVideoOutWidth = 0;
     cachedVideoOutHeight = 0;
     cachedSuperSlowFrameNum = 0;
@@ -212,17 +222,28 @@ BypassCameraContext::~BypassCameraContext() {
 
     pthread_cond_destroy(&videoCommandCond);
     pthread_mutex_destroy(&videoCommandLock);
-    pthread_mutex_destroy(&videoLock);
+    // videoSurfaceProducer(sp<IGraphicBufferProducer>) 由其自身解構子自動釋放
     pthread_mutex_destroy(&photoLock);
 
     delete snapshotReadyCb;   snapshotReadyCb   = nullptr;
     delete snapshotCb;        snapshotCb        = nullptr;
     delete snapshotFreeCb;    snapshotFreeCb    = nullptr;
-    delete burstReadyCb;      burstReadyCb      = nullptr;
+    if (burstResultsById) {
+        for (size_t i = 0; i < burstResultsById->size(); i++) {
+            delete (*burstResultsById)[i].value;
+        }
+        delete burstResultsById;
+        burstResultsById = nullptr;
+    }
     delete burstPrepareCb;    burstPrepareCb    = nullptr;
     delete burstFinishCb;     burstFinishCb     = nullptr;
     delete burstCb;           burstCb           = nullptr;
-    delete videoPrepareSuperSlowCb; videoPrepareSuperSlowCb = nullptr;
+    if (secondResultsById) {
+        // 這裡存的是 BufEntry*，其生命週期由 buffer pool（bufCtx.buffers）
+        // 擁有，不可在這裡 delete；只需清空追蹤容器本身。
+        delete secondResultsById;
+        secondResultsById = nullptr;
+    }
     delete videoFinishCb;     videoFinishCb     = nullptr;
     delete videoPrepareCb;    videoPrepareCb    = nullptr;
     delete videoStartSuperSlowCb; videoStartSuperSlowCb = nullptr;
@@ -271,7 +292,7 @@ BypassCameraContext::~BypassCameraContext() {
 // 前向宣告（實作在其他 .cpp 檔）
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraPhoto_initialize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
-extern "C" void BypassCameraPhoto_finalize(imageprocessor::BypassCameraContext* ctx);
+extern "C" void BypassCameraPhoto_finalize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
 extern "C" int BypassCameraPhoto_changeToPhotoMode(imageprocessor::BypassCameraContext* ctx,
                                          jint mode, jint inW, jint inH, jint outW, jint outH, jint flags);
 extern "C" int BypassCameraPhoto_requestSnapshotReady(imageprocessor::BypassCameraContext* ctx);
@@ -291,7 +312,7 @@ int BypassCameraPhoto_requestSnapshot(JNIEnv* env, jobject thiz, imageprocessor:
 extern "C" int BypassCameraPhoto_requestSnapshotFree(imageprocessor::BypassCameraContext* ctx);
 
 extern "C" int BypassCameraVideo_initialize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
-extern "C" void BypassCameraVideo_finalize(imageprocessor::BypassCameraContext* ctx);
+extern "C" void BypassCameraVideo_finalize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
 extern "C" int BypassCameraVideo_changeToVideoMode(imageprocessor::BypassCameraContext* ctx,
                                          jint mode, jint inW, jint inH, jint outW, jint outH, jint flags);
 extern "C" int BypassCameraVideo_changeToSuperSlowMode(imageprocessor::BypassCameraContext* ctx,
@@ -306,7 +327,7 @@ extern "C" int BypassCameraVideo_startSuperSlowRecording(imageprocessor::BypassC
 extern "C" int BypassCameraVideo_stopVideoRecording(imageprocessor::BypassCameraContext* ctx);
 
 extern "C" int BypassCameraBurst_initialize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
-extern "C" void BypassCameraBurst_finalize(imageprocessor::BypassCameraContext* ctx);
+extern "C" void BypassCameraBurst_finalize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
 extern "C" int BypassCameraPhoto_prepareBurstShot(imageprocessor::BypassCameraContext* ctx);
 extern "C" int BypassCameraPhoto_finishBurstShot(imageprocessor::BypassCameraContext* ctx);
 
@@ -337,7 +358,7 @@ void enqueueVideoCommand(JNIEnv* env,
 
 } // namespace imageprocessor
 
-static void* BypassCameraVideo_worker(void* arg) {
+void* imageprocessor::BypassCameraVideo_worker(void* arg) {
     auto* ctx = static_cast<imageprocessor::BypassCameraContext*>(arg);
     if (!ctx) return nullptr;
 
@@ -482,9 +503,9 @@ void BypassCamera_finalize(JNIEnv* env, jobject thiz, BypassCameraContext* ctx) 
         ctx->cacao = nullptr;
     }
 
-    BypassCameraPhoto_finalize(ctx);
-    BypassCameraVideo_finalize(ctx);
-    BypassCameraBurst_finalize(ctx);
+    BypassCameraPhoto_finalize(env, thiz, ctx);
+    BypassCameraVideo_finalize(env, thiz, ctx);
+    BypassCameraBurst_finalize(env, thiz, ctx);
 }
 } // namespace imageprocessor
 

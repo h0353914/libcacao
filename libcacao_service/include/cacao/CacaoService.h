@@ -233,8 +233,12 @@ private:
     List<sp<Client>> mClients;             // +0x1c..+0x23
     // +0x24   retry counter for serviceDied
     int mRetryCount;                       // +0x24
-    sp<ICacaoClient> mPadding28;           // +0x28 (unused sp)
-    int mPadding2c;                        // +0x2c
+    // +0x28/+0x2c：反編譯 android::CacaoService::getInterfaces()/serviceDied()
+    // (so_32 @ 0x00019dd4 / 0x0001ad80) 確認這是一組 64-bit linkToDeath cookie
+    // （低位在 +0x28、高位在 +0x2c），每次成功連上 provider 時遞增並傳給
+    // linkToDeath；serviceDied() 收到通知時會比對傳入 cookie 與這裡存的值，
+    // 不符就視為過期通知直接忽略。原本誤標為「unused sp / padding」。
+    uint64_t mLinkCookie;                  // +0x28
     sp<V3_0::ICacao> mService;             // +0x30
     sp<V3_1::ICacao> mServiceV31;          // +0x34
 };

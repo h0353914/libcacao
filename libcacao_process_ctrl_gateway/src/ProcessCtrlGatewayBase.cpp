@@ -369,6 +369,33 @@ ProcessCtrlGatewayBase::ProcessCtrlGatewayBase()
 }
 
 ProcessCtrlGatewayBase::~ProcessCtrlGatewayBase() {
+    // CacaoService::Client::disconnect() 在 client binderDied（App 被 force-stop
+    // 等異常終止）時會直接 delete 這個物件，並不會先呼叫 deinit()。deinit()
+    // 才會送出 PAL_MSG_STOP/PAL_MSG_DEINIT 通知 cald 這個 session 結束，並
+    // PAL_ThreadClose(mThread) 正確關閉 worker thread；若跳過這步直接
+    // PAL_Delete()，cald 端會誤以為這個 client 的 mode 仍在使用中，導致下一次
+    // App 重新開啟相機時卡在 STATUS_RELEASED（Camera2 preview session 建不起
+    // 來，需要整機重開才會恢復）。
+    //
+    // 實測比較過三種寫法：(1) 完整 deinit()（含 PAL_ThreadClose/pthread_join）
+    // ：連續 3 次測試中，即使 photo 模式遇到 2-3 次背靠背過熱強制關閉，相機
+    // 都能正常重新開啟，僅在較後面的 cycle 偶爾造成 cacaoserver 以
+    // "invalid pthread_t" SIGABRT（backtrace: PAL_ThreadClose→pthread_join；
+    // PAL_ThreadClose 是 libcacao_pal.so 內的 vendor prebuilt 函式，join 時
+    // 機在 binderDied 的 Binder 執行緒與 worker thread 自身關閉時序之間有
+    // race，屬 vendor PAL 函式內部行為，非我們能修改的範圍）；此 crash 會
+    // 讓 cacaoserver 自動重啟（系統會重新拉起 persistent service），不影響
+    // 裝置整體可用性。(2) 只呼叫 stop()（純訊息，不 join）與 (3) stop()+送
+    // PAL_MSG_DEINIT 但省略 join：兩者都不會 crash，但都無法解決
+    // STATUS_RELEASED——通常在僅僅 2 次過熱後就會復發，代表真正釋放 cald
+    // session 需要 worker thread 真的結束（join 到），而不只是收到訊息。
+    // 兩害相權取其輕：(1) 的 crash 是自我修復的（重啟後即恢復），(2)(3) 的
+    // STATUS_RELEASED 卻是要整機重開才能解，故採用完整 deinit()。deinit()
+    // 內部依 mInitFlag 狀態判斷是否需要動作，未 init 或已 deinit 過都是安全
+    // 的 no-op。
+    if (mInitFlag != 0) {
+        deinit();
+    }
     PAL_Delete();
 }
 

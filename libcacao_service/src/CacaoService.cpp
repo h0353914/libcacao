@@ -30,6 +30,21 @@ namespace V3_1 = ::vendor::somc::hardware::camera::cacao::V3_1;
 namespace provider_V1_0 = ::vendor::somc::hardware::camera::provider::V1_0;
 using ::android::hardware::Return;
 
+// 裝置端 V3_1::ICacao::castFrom 匯出的實際 ABI 是
+// Return<sp<V3_1::ICacao>>（28-byte sret），但 IVendorSomcCameraProvider.h
+// 依 Android 14 HIDL header 生成的宣告回傳型別是 plain sp<ICacao>。
+// C++ mangled name 不包含回傳型別，所以直接呼叫 header 宣告的 castFrom()
+// 仍會連結到同一個裝置端符號，但呼叫端配置的 sret buffer 只有
+// sizeof(sp<>) 大小，裝置端函式卻會寫入完整 28 bytes，造成堆疊溢寫。
+// 這正是先前 getInterfaces() 內 RefBase::decStrong() null deref 崩潰
+// （於 onRegistration 首次呼叫時必現）的根因。修法與
+// ProcessCtrlGateway.cpp 的 ICacao_castFrom_compat 相同：用 asm label
+// 直接指定裝置端 mangled symbol，並用正確的 Return<sp<>> 回傳型別接收。
+extern Return<::android::sp<V3_1::ICacao>>
+CacaoService_ICacao_V31_castFrom_compat(const ::android::sp<V3_0::ICacao>& parent, bool emitError)
+    asm("_ZN6vendor4somc8hardware6camera5cacao4V3_16ICacao"
+        "8castFromERKN7android2spINS3_4V3_06ICacaoEEEb");
+
 // 原始 .so 透過 vtable 偏移直接呼叫 serialize/getSerializedSize，
 // C++ 中需要透過 ISerializable 介面存取。
 // 工廠建立的 concrete 物件（ProcessCtrlResult, ProcessCtrlDynamicParameterConfig）
@@ -52,9 +67,8 @@ CacaoService::CacaoService() {
     pthread_mutex_init(&mClientLock, NULL);
     // mRetryCount 在 class 中已初始化為 0
     mRetryCount = 0;
-    // +0x28, +0x2c 在 .so 中為零初始化
-    mPadding28 = NULL;
-    mPadding2c = 0;
+    // +0x28/+0x2c 的 linkToDeath cookie 在 .so 中為零初始化
+    mLinkCookie = 0;
 
     // 註冊 IServiceNotification 以接收 HAL 服務上線通知
     // 原始 .so: sp<IServiceNotification>::sp<CacaoService>(this) → registerForNotifications
@@ -62,9 +76,6 @@ CacaoService::CacaoService() {
 }
 
 CacaoService::~CacaoService() {
-    // 清除 +0x28, +0x2c
-    mPadding28 = NULL;
-    mPadding2c = 0;
     // 清除 HIDL 服務引用
     mServiceV31 = NULL;
     mService = NULL;
@@ -437,30 +448,87 @@ Return<void> CacaoService::onRegistration(
 // ── getInterfaces ────────────────────────────────────────
 void CacaoService::getInterfaces() {
     using provider_V1_0::IVendorSomcCameraProvider;
+    using ::android::hardware::camera::common::V1_0::Status;
+
     sp<IVendorSomcCameraProvider> provider = IVendorSomcCameraProvider::getService();
     if (provider == NULL) return;
 
-    provider->linkToDeath(this, 0);
+    // so_32 @ 0x00019dd4：cookie 在呼叫 linkToDeath 前就先算好遞增值，但只有
+    // getCacaoInterface_V3_0 也成功時才會把新值寫回 mLinkCookie；失敗的話
+    // mLinkCookie 維持舊值，serviceDied() 之後收到帶新 cookie 的死亡通知會
+    // 因為對不上而被當作過期通知忽略（與原版行為一致）。以下三段錯誤訊息
+    // 字串都是從 so_32 @ 0x0001e6dc 附近的 rodata 直接讀出，逐字比對過。
+    uint64_t newCookie = mLinkCookie + 1;
 
-    provider->getCacaoInterface_V3_0(
-        [&](::android::hardware::camera::common::V1_0::Status /*status*/,
-            const sp<V3_0::ICacao>& cacaoService) {
-            mService = cacaoService;
+    auto linkRet = provider->linkToDeath(this, newCookie);
+    if (!linkRet.isOk()) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "%s: Transaction error in linking to camera provider 'internal/0' death: %s",
+            "getInterfaces", linkRet.description().c_str());
+    } else if (!linkRet) {
+        __android_log_print(ANDROID_LOG_WARN, LOG_TAG,
+            "%s: Unable to link to provider 'internal/0' death notifications",
+            "getInterfaces");
+    }
+
+    sp<V3_0::ICacao> newService;
+    Status cbStatus = Status::INTERNAL_ERROR;
+    bool gotCallback = false;
+    int result = 0;
+    auto hidlRet = provider->getCacaoInterface_V3_0(
+        [&](Status status, const sp<V3_0::ICacao>& cacaoService) {
+            cbStatus = status;
+            newService = cacaoService;
+            gotCallback = true;
         });
 
-    if (mService != NULL) {
-        mServiceV31 = V3_1::ICacao::castFrom(mService);
+    if (!hidlRet.isOk()) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "Transaction error trying to cacao interface: %s",
+            hidlRet.description().c_str());
+        result = -0x6f;
     }
+    if (gotCallback && cbStatus != Status::OK) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Unable to cacao interface");
+        result = -0x6f;
+    }
+
+    if (result >= 0) {
+        mLinkCookie = newCookie;
+        mService = newService;
+        if (mService != NULL) {
+            auto castRet = CacaoService_ICacao_V31_castFrom_compat(mService, false);
+            mServiceV31 = static_cast<::android::sp<V3_1::ICacao>>(castRet);
+        }
+    }
+
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "%s: cookie:%llu",
+        "getInterfaces", static_cast<unsigned long long>(mLinkCookie));
 }
 
 // ── serviceDied (hidl_death_recipient) ───────────────────
 void CacaoService::serviceDied(uint64_t cookie,
                                const wp<hidl::base::V1_0::IBase>& /*who*/) {
-    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "serviceDied");
+    // so_32 @ 0x0001ad80：log 訊息、字串皆從 rodata 逐字讀出。
+    __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+        "The camera provider is died. current:%llu, died:%llu",
+        static_cast<unsigned long long>(mLinkCookie),
+        static_cast<unsigned long long>(cookie));
 
-    mRetryCount++;
-    if (mRetryCount >= 19) {
-        // 原始 .so: 在 retry count >= 0x13 時 abort
+    // 傳入的 cookie 對不上目前 getInterfaces() 最後一次成功連線時記下的
+    // mLinkCookie，代表這是一次「過期」的死亡通知（例如已經因為別的原因
+    // 重新連線過），直接忽略，不進入 retry/abort 流程。
+    if (cookie != mLinkCookie) {
+        return;
+    }
+
+    // so_32 @ 0x0001ad80：判斷用的是「遞增前」的舊值，遞增後才寫回，
+    // 也就是第 20 次（舊值 0x13=19）才會 abort，不是第 19 次。
+    int oldRetryCount = mRetryCount;
+    mRetryCount = oldRetryCount + 1;
+    if (oldRetryCount >= 0x13) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+            "Abort cacao service because camera provider is died frequently.");
         abort();
     }
 
