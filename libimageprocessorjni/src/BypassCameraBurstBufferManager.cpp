@@ -214,9 +214,24 @@ extern "C" int BypassCameraBurstBufferManager_createBuffers(
 
         // 用 ANativeWindowBuffer 的 handle 建構 ImageBuf
         // ImageBuf(void* handle, ImageSize{w,h}, DataSpace(1), ImageFormat(0))
+        //
+        // [已修正，20260731] 反編譯原版 so_32 @ 0x1a758 確認：寬高不是從
+        // dequeue 到的 buffer 自己的 width/height 讀，而是從
+        // BypassCameraPhoto_changeToPhotoMode 快取進 ctx 的 outW/outH
+        // （ctx+0x48/0x4c，mode==0 時）讀出來的。若 dequeue 到的 buffer
+        // 實際尺寸跟這次 request 「官方」設定的尺寸不一致，cald 收到的
+        // ImageBuf 尺寸跟原版不同，懷疑是這個不一致造成 cald 內部多跑一個
+        // 處理階段（snapshot progress 被送達兩次的根因候選）。cachedPhotoOutWidth/
+        // Height 為 0 代表 changeToPhotoMode 還沒設過（例如 burst 模式路徑），
+        // 這種情況下退回原本用 anwb 自己回報的尺寸，不影響 burst。
         cacao::ImageSize sz;
-        sz.width = anwb->width;
-        sz.height = anwb->height;
+        if (ctx->cachedPhotoOutWidth != 0 && ctx->cachedPhotoOutHeight != 0) {
+            sz.width = ctx->cachedPhotoOutWidth;
+            sz.height = ctx->cachedPhotoOutHeight;
+        } else {
+            sz.width = anwb->width;
+            sz.height = anwb->height;
+        }
         cacao::ImageBuf* imgBuf = new cacao::ImageBuf(
             (void*)anwb->handle, sz, cacao::DataSpace(1), cacao::ImageFormat(0));
 

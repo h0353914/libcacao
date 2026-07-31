@@ -38,6 +38,48 @@ extern "C" int BypassCameraBurstBufferManager_queueBuffer(
 extern "C" imageprocessor::BufEntry* BypassCameraBurstBufferManager_findByNativeHandle(
         imageprocessor::BypassCameraContext* ctx, void* nativeHandle);
 
+namespace imageprocessor {
+
+// so_32 @ 0x188d8 (BypassCameraPhoto_requestSnapshot) 反編譯確認：每次拍照請求會
+// new 一個小 wrapper {ctx, VectorImpl*(imageBufs), requestId}，把它的指標存進
+// 這次請求專屬、新配置的 ProcessCtrlResult::field_10（userData），而非像其他
+// callback 一樣直接存 ctx。SnapshotCallback::onHandleProgress/onHandleResult
+// 用這個 wrapper 取得 ctx 與 requestId（原版 piVar1=getUserData(); ctx=*piVar1;
+// requestId=piVar1[2]）。這裡簡化成只存 ctx+requestId（不需要額外持有
+// imageBufs vector 指標，我們的 processAsync 呼叫完就不再需要它）。
+struct SnapshotResultUserData {
+    BypassCameraContext* ctx;
+    uint32_t requestId;
+    // [原版沒有，20260731 裝置實測新增] cald 對同一個 requestId 有時會送兩次
+    // handleProgress（logcat 實測間隔約 0.7 秒，onHandleResult 都還沒送達）。
+    // 原版 onHandleProgress 反編譯確認沒有任何去重邏輯，Java 端
+    // ShutterDoneHandlerCallbackImpl 也證實完全沒有防護（BypassCameraController
+    // .peekLastSavingPhotoRequest() 在第二次到達、佇列已空時直接回傳 null，
+    // Java 端沒檢查就直接用，NullPointerException 崩潰）。這代表原版的協定
+    // 假設是「同一個 request 最多只會收到一次 ShutterDone」，cald 對我們的
+    // 請求送出這個多餘的第二次是個尚未查出根因的協定落差。這裡用「每個
+    // request 自己的 wrapper」記一個旗標，只抑制同一個 request 的重複
+    // progress，不影響其他並行請求——跟舊版掛在 ctx 上的全域 shutterDoneSent
+    // 不同，範圍精準對應到崩潰現場，不是回退到原本那種粗糙的做法。
+    bool shutterDoneSent = false;
+};
+
+// 從 SnapshotCallback 專用的 wrapper userData 取出 ctx/requestId。
+// 注意：這跟共用的 getCtxFromResult() 不同——SnapshotCallback 的
+// ProcessCtrlResult::field_10 存的是上面這個 wrapper 的指標，不是 ctx 直接的
+// 指標，不可以互相混用。
+static bool getSnapshotCtxAndId(const cacao::ProcessResultBase* result,
+                                 BypassCameraContext** outCtx, uint32_t* outReqId) {
+    if (!result) return false;
+    auto* udata = static_cast<SnapshotResultUserData*>(result->getUserData());
+    if (!udata) return false;
+    *outCtx = udata->ctx;
+    *outReqId = udata->requestId;
+    return true;
+}
+
+} // namespace imageprocessor
+
 // ─────────────────────────────────────────────────────
 // SnapshotReadyCallback::onHandleResult
 // 來自 so_32 @ 0x00008c91
@@ -96,66 +138,103 @@ void SnapshotReadyCallback::onHandleResult(const cacao::ProcessResultBase* resul
 
 // ─────────────────────────────────────────────────────
 // SnapshotCallback::onHandleProgress
-// 來自 so_32 @ 0x00018d91（完整反編譯，非早期簡化版本）
-// 呼叫 callbackFromNative(0x14, requestId, 1, isSuccess, false, false, 0, 0xff, 0xff)
+// 來自 so_32 @ 0x00018d91（完整反編譯）
+// 呼叫 callbackFromNative(0x14, requestId, 1, isSuccess, false, false, 0xff, 0xff, 0xff)
 //
-// [已嘗試改用 per-request id 移除 shutterDoneSent，裝置實測發現新的真實
-// 崩潰，已還原本版本] 完整反編譯這個函式後確認原版確實沒有任何去重
-// 邏輯，改用 getUserData() 取得的 per-request requestId 取代
-// shutterDoneSent。但把 BypassCameraPhoto_requestSnapshot 也改為依此
-// 反編譯結果、每次都建立新的 ProcessCtrlResult 並在 onHandleResult 中
-// delete 它之後，實測（20260727 session，photo_settings 測試）出現同一個
-// requestId 的 onHandleResult 被連續呼叫兩次、第二次對已釋放的
-// ProcessCtrlResult 呼叫 getUserData() 是 use-after-free，並造成 Java 端
-// ShutterDoneHandlerCallbackImpl 崩潰（與先前 shutterDoneSent 想避免的
-// 崩潰同一個 NPE，但成因不同）。
+// 完整反編譯確認原版對這個函式本身完全沒有任何去重邏輯——cald 每次觸發
+// handleProgress 都無條件呼叫 callbackFromNative。原版靠的是
+// requestSnapshot 幫每次請求配置專屬的 ProcessCtrlResult + wrapper（見
+// SnapshotResultUserData），不是單一共用旗標。progress 參數傳的其實是
+// requestId（wrapper[2]），不是 result->getProgress()；isSuccess 除了
+// errCode==0 還要求 result->field_1c!=0 才算真的成功。
 //
-// [動態驗證結果] 用 native backtrace 追蹤確認：onHandleProgress/
-// onHandleResult 兩者都是透過真正的跨進程 Binder transact()
-// （BnCacaoProcessCallback::onTransact <- BBinder::transact <-
-// IPCThreadState::executeCommand <- joinThreadPool，thread pool
-// worker thread）送達，不是同一個 thread 內的重複呼叫。但重複送達的
-// 次數/時機並不固定：某次拍照觀察到 onHandleProgress 被送達 3 次、
-// onHandleResult 只送達 1 次（3 次都在數十毫秒內、跟著同一組
-// cald CAP[<--]frame/result 通知），但另一次拍照（20260727 稍早）
-// 卻觀察到 onHandleResult 本身被送達 2 次。也就是說 cacaoserver 端對
-// 「這次請求已經完整送達」這件事本身沒有可靠的去重保證，是
-// non-deterministic 的。這代表任何在 onHandleResult/onHandleProgress
-// 內部釋放 per-request 物件的設計都必須假設「同一個 result 指標可能在
-// 任意之後的時間點被再呼叫一次」，不能只靠緊接著的下一次呼叫來判斷是否
-// 為重複；目前這個簡化版本靠「共用、不在 callback 內刪除」的
-// ProcessCtrlResult（見 createResultWithCtx）天生對此免疫，故先維持。
+// [原版沒有，20260731 裝置實測新增] 完整實測（logcat + Java 端 smali 交叉
+// 比對）確認：cald 有時會對同一個 requestId 送兩次 handleProgress（間隔約
+// 0.7 秒，都在 onHandleResult 送達之前），若兩次都無條件轉發，Java 端
+// BypassCameraControllerCallbackImpl 第二次會呼叫
+// BypassCameraController.peekLastSavingPhotoRequest()——這時候第一次的
+// 存檔流程已經把佇列清空，回傳 null，Java 端沒有 null 檢查，直接
+// NullPointerException 崩潰（已用真機 logcat 抓到完整 stack trace 確認）。
+// 這證實原版的協定假設是「同一個 request 最多只會收到一次 ShutterDone」，
+// cald 對我們的請求多送這一次是尚未查出根因的協定落差；在查出根因之前，
+// 用 SnapshotResultUserData::shutterDoneSent（每個 request 自己的旗標，
+// 不是掛在 ctx 上的全域旗標）只抑制同一個 request 的重複 progress，不會
+// 誤擋其他並行請求的合法進度。
 // ─────────────────────────────────────────────────────
 void SnapshotCallback::onHandleProgress(const cacao::ProcessResultBase* result) {
-    BypassCameraContext* ctx = getCtxFromResult(result);
-    if (!ctx) return;
+    if (!result) return;
+    auto* udata = static_cast<imageprocessor::SnapshotResultUserData*>(result->getUserData());
+    if (!udata) return;
+    BypassCameraContext* ctx = udata->ctx;
+    uint32_t reqId = udata->requestId;
 
-    int32_t  progress = result->getProgress();
-    uint32_t errCode  = result->getResult();
-    bool isSuccess    = (errCode == 0);
+    uint32_t errCode = result->getResult();
+    bool isSuccess = false;
+    if (errCode == 0) {
+        const auto* r = static_cast<const cacao::ProcessCtrlResult*>(result);
+        isSuccess = (r->field_1c != 0);
+    }
 
     pthread_mutex_lock(&ctx->photoLock);
-    if (ctx->photoInitialized && !ctx->shutterDoneSent) {
-        ctx->shutterDoneSent = true;
+    if (ctx->photoInitialized && !udata->shutterDoneSent) {
+        udata->shutterDoneSent = true;
+        // so_32 @ 0x18d90 raw 組譯碼逐指令確認：傳給 Java 的最後三個 int 參數
+        // 全部是 0xff（stm/strd 三次都存 0xff），不是 0/0xff/0xff。
         callPhotoCallback(ctx,
                           CB_SHUTTER_DONE,
-                          progress, 1,
+                          (int)reqId, 1,
                           isSuccess, false, false,
-                          0, 0xff, 0xff);
+                          0xff, 0xff, 0xff);
     }
     pthread_mutex_unlock(&ctx->photoLock);
 }
 
 // ─────────────────────────────────────────────────────
 // SnapshotCallback::onHandleResult
-// 來自 so_32 @ 0x00018e30
+// 來自 so_32 @ 0x00018e30（完整反編譯）
 // 呼叫 callbackFromNative(0x15, requestId, 1, false, false, false, 0, 0xff, 0xff)
-// [見 onHandleProgress 上方說明：per-request id 版本已還原，這裡沿用
-// ctx->requestCounter + 線性搜尋 in-use buffer 的簡化版本]
+//
+// 原版用 requestId 查 ctx+0x50（BufEntry*）跟 ctx+0x24（ProcessCtrlResult*，
+// 即這次呼叫的 result 本身）兩個 SortedVector：找到 buffer entry 就標記
+// state=3 並 queue 回去；找到 result 紀錄後就把 wrapper 與 result 本身
+// delete 掉（"delete this" 手法——result 就是 param_1），最後才從
+// ctx+0x24 移除並通知 Java。
+//
+// [原版「查不到」分支的反編譯與後果分析，20260731]
+// 原版兩段查表都是：
+//     idx = SortedVectorImpl::indexOf(vector, &requestId);
+//     if (idx < 0) ptr = (vector位址 + 0x14);  // 查不到
+//     else         ptr = (storage位址 + idx*8 + 4);  // 查到
+// 反編譯原版 libutils.so 的 SortedVectorImpl::SortedVectorImpl(itemSize,flags)
+// 建構子（so_32 libutils.so @ 0x1e630）確認這個物件只有 5 個 4-byte 欄位
+// （vtable/mStorage/mCount/flags/itemSize），物件大小剛好是 0x14 bytes——
+// 也就是說「vector位址 + 0x14」剛好等於「這個 heap 物件本身結尾之後的下一個
+// 位元組」，完全在物件宣告範圍之外。這不是原版設計出來的安全 fallback，
+// 是真正的越界讀取（undefined behavior），讀到什麼完全看當下 heap
+// allocator 的配置歷史，不是編譯進二進位裡的固定值。
+// 往下追這個「查不到」分支實際會做的事：
+//   - ctx+0x50（BufEntry*）查不到：把這個越界讀到的值當成 BufEntry*，對
+//     `entry->state`（+0xc）寫入 3。若那塊記憶體剛好是 0（新配置、還沒
+//     寫過的分頁很常見），等同 `*(int*)0xc = 3`，會 SIGSEGV；若是非 0
+//     殘留值，則是對一個隨機位址寫入 3——落在未映射記憶體一樣 SIGSEGV，
+//     極少數情況落在別的合法記憶體則是無聲毀損。
+//   - ctx+0x24（ProcessCtrlResult*）查不到：把越界讀到的值當成物件指標，
+//     直接呼叫它的虛擬函式（getUserData()）甚至 delete 它——隨機位址幾乎
+//     必定不是合法 vtable，這條路徑大機率比上面那條更容易直接崩潰。
+// 也就是說原版對這個極端情境（cald 對同一 requestId 重複送達
+// onHandleResult，已用 native backtrace 證實過確實會發生）大機率本身就是
+// 會 SIGSEGV 的，只是觸發頻率低到 Sony 可能沒發現/沒修——不是我們少做了
+// 什麼安全機制,而是原版這條路徑本身就是個沒被抓到的 bug。真的 android::
+// SortedVector 在我們自己的編譯結果裡，這塊記憶體會是完全不同、無法預測
+// 的內容，照抄同一個 +0x14 offset 不會重現原版行為，只會是另一種性質相同
+// 但結果不可預測的越界存取。因此這裡改成明確的 indexOf()<0 判斷，查不到
+// 就記 log 並跳過對應動作——把原版一個機率性自爆的隱藏 bug，換成一個
+// 確定不會自爆的正常分支。
 // ─────────────────────────────────────────────────────
 void SnapshotCallback::onHandleResult(const cacao::ProcessResultBase* result) {
-    BypassCameraContext* ctx = getCtxFromResult(result);
-    if (!ctx) return;
+    BypassCameraContext* ctx = nullptr;
+    uint32_t reqId = 0;
+    if (!imageprocessor::getSnapshotCtxAndId(result, &ctx, &reqId)) return;
 
     pthread_mutex_lock(&ctx->photoLock);
     if (!ctx->photoInitialized) {
@@ -163,27 +242,41 @@ void SnapshotCallback::onHandleResult(const cacao::ProcessResultBase* result) {
         return;
     }
 
-    uint32_t reqId = ctx->requestCounter;
-
-    // 找到 state==2 (in_use) 的 entry，queue buffer 回 Surface
-    BypassCameraBufferContext* bc = &ctx->bufCtx;
-    BufEntry* entry = nullptr;
-    if (bc->byBufferPtr) {
-        for (size_t i = 0; i < bc->byBufferPtr->size(); i++) {
-            BufEntry* e = (*bc->byBufferPtr)[i].value;
-            if (e->state == 2) {
-                entry = e;
-                break;
-            }
+    // ctx+0x50 (secondResultsById)：requestId -> BufEntry*
+    if (ctx->secondResultsById) {
+        android::key_value_pair_t<int, void*> key((int)reqId);
+        ssize_t idx = ctx->secondResultsById->indexOf(key);
+        if (idx >= 0) {
+            auto* entry = static_cast<BufEntry*>((*ctx->secondResultsById)[idx].value);
+            entry->state = 3;  // done
+            BypassCameraBurstBufferManager_queueBuffer(ctx, entry);
+            ALOGD("SnapshotCallback::onHandleResult: queued entry=%p reqId=%u", entry, reqId);
+            ctx->secondResultsById->removeItemsAt(idx);
+        } else {
+            // 查不到：原版這裡會用越界讀取湊出一個假 BufEntry* 繼續寫 state=3
+            // （見上方函式註解的完整分析），大機率本身就是 SIGSEGV；我們明確跳過。
+            ALOGD("SnapshotCallback::onHandleResult: reqId=%u not found in secondResultsById", reqId);
         }
     }
 
-    if (entry) {
-        entry->state = 3;  // done
-        BypassCameraBurstBufferManager_queueBuffer(ctx, entry);
-        ALOGD("SnapshotCallback::onHandleResult: queued entry=%p tag=%d", entry, entry->tag);
-    } else {
-        ALOGD("SnapshotCallback::onHandleResult: no in-use entry found");
+    // ctx+0x24 (burstResultsById)：requestId -> ProcessCtrlResult*（= 這次呼叫的 result 本身）
+    if (ctx->burstResultsById) {
+        android::key_value_pair_t<int, cacao::ProcessCtrlResult*> key((int)reqId);
+        ssize_t idx = ctx->burstResultsById->indexOf(key);
+        if (idx >= 0) {
+            imageprocessor::SnapshotResultUserData* udata =
+                static_cast<imageprocessor::SnapshotResultUserData*>(result->getUserData());
+            ctx->burstResultsById->removeItemsAt(idx);
+            delete udata;
+            // "delete this" 手法：result 就是這次請求配置的 ProcessCtrlResult 本身
+            delete const_cast<cacao::ProcessCtrlResult*>(
+                    static_cast<const cacao::ProcessCtrlResult*>(result));
+        } else {
+            // 查不到：原版這裡會用越界讀取湊出一個假物件指標，直接呼叫它的
+            // 虛擬函式甚至 delete 它（見上方函式註解的完整分析），比上面
+            // secondResultsById 那條更容易直接崩潰；我們明確跳過。
+            ALOGD("SnapshotCallback::onHandleResult: reqId=%u not found in burstResultsById", reqId);
+        }
     }
 
     // CB_SNAPSHOT_DONE = 0x15
@@ -386,9 +479,8 @@ extern "C" int BypassCameraPhoto_initialize(JNIEnv* env, jobject thiz, imageproc
 
     // ctx+0x24/0x50：反編譯確認原版分別以 requestId 為 key 追蹤
     // ProcessCtrlResult(+0x24)/BufEntry(+0x50)（見 BypassCamera.h 說明），
-    // 但改用這個機制取代 shutterDoneSent 時裝置實測出現真實崩潰，已還原
-    // 成簡化版本（見 SnapshotCallback::onHandleProgress 的詳細說明），這裡
-    // 目前只建立空 vector、不會被寫入。
+    // 由 BypassCameraPhoto_requestSnapshot 寫入、SnapshotCallback::
+    // onHandleResult 查表+delete 後移除。
     if (!ctx->burstResultsById) {
         ctx->burstResultsById =
             new android::SortedVector<android::key_value_pair_t<int, cacao::ProcessCtrlResult*>>();
@@ -431,12 +523,16 @@ extern "C" void BypassCameraPhoto_finalize(JNIEnv* env, jobject /*thiz*/, imagep
     delete static_cast<cacao::ProcessCtrlResult*>(ctx->snapshotFreeResult);  ctx->snapshotFreeResult  = nullptr;
     delete static_cast<cacao::ProcessCtrlResult*>(ctx->burstFinishResult);   ctx->burstFinishResult   = nullptr;
 
-    // 來自 so_32 @ 0x184cc：疊代 ctx->burstResultsById/secondResultsById 刪除
-    // 任何殘留 entry 的 value 後銷毀整個 vector（目前兩者都沒有程式碼會寫入
-    // entry，見 BypassCamera.h 說明，這裡的疊代純屬防禦性/等效還原原版邏輯）
+    // 來自 so_32 @ 0x184cc：疊代 ctx->burstResultsById 刪除任何殘留 request
+    // 的 ProcessCtrlResult 與其 userData wrapper（BypassCameraPhoto_
+    // requestSnapshot 配置的 SnapshotResultUserData），再銷毀整個 vector。
     if (ctx->burstResultsById) {
         for (size_t i = 0; i < ctx->burstResultsById->size(); i++) {
-            delete (*ctx->burstResultsById)[i].value;
+            cacao::ProcessCtrlResult* result = (*ctx->burstResultsById)[i].value;
+            if (result) {
+                delete static_cast<imageprocessor::SnapshotResultUserData*>(result->getUserData());
+                delete result;
+            }
         }
         delete ctx->burstResultsById;
         ctx->burstResultsById = nullptr;
@@ -462,6 +558,17 @@ extern "C" int BypassCameraPhoto_changeToPhotoMode(imageprocessor::BypassCameraC
                                          jint mode, jint inW, jint inH,
                                          jint outW, jint outH, jint flags) {
     if (!ctx || !ctx->cacao) return -1;
+
+    // 原始 so_32 @ 0x186dc 反編譯確認：stop() 之後、建構 ProcessCtrlMode 之前，
+    // 原版會先把 inW/inH/outW/outH/flags 快取進 ctx（ctx+0x40/0x44/0x48/0x4c/
+    // 0xC4）。BypassCameraBurstBufferManager_createBuffers 建立 buffer 時的
+    // 寬高就是從 ctx+0x48/0x4c 讀出來的，不是從 dequeue 到的 buffer 自己的
+    // width/height 讀，這裡補上這個快取。
+    ctx->cachedPhotoInWidth = (uint32_t)inW;
+    ctx->cachedPhotoInHeight = (uint32_t)inH;
+    ctx->cachedPhotoOutWidth = (uint32_t)outW;
+    ctx->cachedPhotoOutHeight = (uint32_t)outH;
+    ctx->cachedPhotoFlags = (uint32_t)flags;
 
     // 原始 so_32 @ 0x186dc: 先呼叫 stop() 重置 gateway 狀態
     int ret = ctx->cacao->stop();
@@ -615,11 +722,6 @@ int BypassCameraPhoto_requestSnapshot(JNIEnv* env, jobject thiz, imageprocessor:
 
     pthread_mutex_lock(&ctx->photoLock);
 
-    // 重設 shutterDoneSent flag，允許新的一次 ShutterDone（見
-    // SnapshotCallback::onHandleProgress 的說明：per-request id 版本已
-    // 因裝置實測發現的真實崩潰而還原，暫時保留這個 workaround）
-    ctx->shutterDoneSent = false;
-
     // 遞增請求計數器 (原始 .so: *(param_2 + 0x20) += 1)
     ctx->requestCounter++;
 
@@ -691,23 +793,36 @@ int BypassCameraPhoto_requestSnapshot(JNIEnv* env, jobject thiz, imageprocessor:
     __android_log_print(ANDROID_LOG_ERROR, NULL,
         "%s: dequeueBuffer ok.", "BypassCameraPhoto_requestSnapshot");
 
-    // [已嘗試依反編譯結果改用 ctx+0x24/0x50 SortedVector 追蹤 per-request
-    // ProcessCtrlResult/BufEntry，裝置實測發現真實崩潰（見
-    // SnapshotCallback::onHandleProgress/onHandleResult 上方詳細說明），
-    // 已還原成單一共用 ProcessCtrlResult 的簡化版本。]
-    cacao::ProcessCtrlResult* result = createResultWithCtx(ctx);
+    // so_32 @ 0x188d8 反編譯確認：每次請求都 new 一個專屬的 ProcessCtrlResult
+    // （不是共用的），userData 指向 {ctx, requestId} 的 wrapper，並以
+    // requestId 為 key 分別存進 ctx+0x24（result 本身）與 ctx+0x50
+    // （dequeue 到的 buffer entry），供 SnapshotCallback::onHandleResult
+    // 完成時查表+delete。
+    const uint32_t reqId = ctx->requestCounter;
+    auto* udata = new imageprocessor::SnapshotResultUserData{ctx, reqId};
+    cacao::ProcessCtrlResult* result = new cacao::ProcessCtrlResult();
+    result->field_10 = reinterpret_cast<uintptr_t>(udata);
 
     // 設定 entry tracking（原始 .so: entry->tag = ctx->field_C0，不是
     // requestCounter——這個 tag 只用於診斷 log，不影響邏輯，反編譯
     // so_32 @ 0x188d8 確認）
     entry->tag = (int32_t)ctx->field_C0;
 
+    if (ctx->burstResultsById) {
+        ctx->burstResultsById->add(
+                android::key_value_pair_t<int, cacao::ProcessCtrlResult*>((int)reqId, result));
+    }
+    if (ctx->secondResultsById) {
+        ctx->secondResultsById->add(
+                android::key_value_pair_t<int, void*>((int)reqId, entry));
+    }
+
     // 建立 ImageBuf vector 傳給 processAsync (原始 .so: VectorImpl(4, 7))
     android::Vector<cacao::ImageBuf*> imageBufs;
     imageBufs.push_back(entry->imageBuf);
 
-    ALOGD("requestSnapshot: dequeued entry=%p imgBuf=%p tag=%d",
-          entry, entry->imageBuf, entry->tag);
+    ALOGD("requestSnapshot: dequeued entry=%p imgBuf=%p tag=%d reqId=%u",
+          entry, entry->imageBuf, entry->tag, reqId);
 
     // 呼叫 processAsync(param, imageBufs, snapshotCb, result)
     ctx->cacao->processAsync(

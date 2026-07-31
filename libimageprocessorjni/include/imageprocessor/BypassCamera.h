@@ -115,10 +115,12 @@
 //             「0x18-byte」大小疑似有誤，BurstCallback 實際看起來也是 4-byte
 //             純 vtable stateless listener（所有狀態都從 onHandleProgress/
 //             onHandleResult 的 param_1 取得，不使用 this 的資料成員）。
-//             BypassCameraBurst_requestSnapshot 目前的簡化實作與反編譯出的真實
-//             呼叫形狀（需建立 buffer vector、每次呼叫重新配置 ProcessCtrlResult
-//             與一個 16-byte 的請求描述結構，dispatch 呼叫也是 4 個參數而非現有
-//             3 參數 process()）差距很大，需要更大規模重寫，列為後續項目。
+//             BypassCameraBurst_requestSnapshot 已依此重寫：每次呼叫都用
+//             BypassCameraBurstBufferManager_createBufVector 建立 buffer
+//             vector、重新配置 ProcessCtrlResult + BurstRequestData wrapper，
+//             並用 4 參數的 processAsync(param, bufVec, listener, result)
+//             dispatch（不是 3 參數的 process()），與反編譯出的真實呼叫形狀
+//             一致（見 BypassCameraBurst.cpp 內的完整說明）。
 //   ctx+0xD4: BypassCameraBufferContext（原版）。**注意**：我們的
 //             BypassCameraContext C++ 宣告在 burstSnapshotCb 之後多插入了
 //             三個內部快取欄位（cachedVideoOutWidth/Height/
@@ -294,11 +296,7 @@ struct BypassCameraContext {
     android::SortedVector<android::key_value_pair_t<int, void*>>* secondResultsById; // +0x50
     pthread_mutex_t     photoLock;      // +0x54/0x98
     bool                photoInitialized; // +0x58/0x9c (or nearby offset)
-    // [原版沒有，已知會導致真實崩潰但暫緩移除，見 BypassCameraPhoto.cpp 內
-    // SnapshotCallback::onHandleProgress 的詳細說明] cald 有時會在拍照完成
-    // 後（例如切換模式時）多送一次 progress，Java 端沒有防護會直接 NPE。
-    bool                shutterDoneSent;
-    uint8_t             _pad2[2];
+    uint8_t             _pad2[3];
 
     // --- video 欄位 ---
     jobject             videoJObj;      // +0x5c/...
@@ -328,13 +326,30 @@ struct BypassCameraContext {
     bool                burstInitialized; // +0xBC: burst 模組已初始化旗標
     uint8_t             _pad4[3];
     uint32_t            field_C0;       // =0
-    uint32_t            field_C4;       // =4
+    // [已修正] 舊文件標「=4」是錯的：反編譯 BypassCameraPhoto_changeToPhotoMode
+    // (so_32 @ 0x186dc) 確認這個位置其實是動態存進去的 flags 參數
+    // （param_3[0x31] = param_8），見 cachedPhotoFlags。
+    uint32_t            field_C4;
     jobject             burstJObj;      // +0xC8: NewGlobalRef(thiz)，burst 模組專用
     jmethodID           burstMethodId;  // +0xCC: callbackFromNative methodID（burst 模組專用快取）
     IResultListener*    burstSnapshotCb;// +0xD0: BypassCameraBurst_requestSnapshot 使用的 listener
     uint32_t            cachedVideoOutWidth;
     uint32_t            cachedVideoOutHeight;
     uint32_t            cachedSuperSlowFrameNum;
+
+    // [新增，20260731] 反編譯 BypassCameraPhoto_changeToPhotoMode
+    // (so_32 @ 0x186dc) 確認原版會把 inW/inH/outW/outH/flags 快取進 ctx
+    // （ctx+0x40/0x44/0x48/0x4c/0xC4），且 BypassCameraBurstBufferManager_
+    // createBuffers (so_32 @ 0x1a758) 建立 buffer 時的寬高就是從
+    // ctx+0x48/0x4c（mode==0/photo 時）讀出來的，不是從 dequeue 到的
+    // ANativeWindowBuffer 自己的 width/height 讀。我們原本完全沒做這個
+    // 快取，buffer 建立時只能用 anwb 自己回報的尺寸，懷疑是這個尺寸來源
+    // 不一致導致 cald 內部多跑一個階段（雙重 progress 的根因候選）。
+    uint32_t            cachedPhotoInWidth;
+    uint32_t            cachedPhotoInHeight;
+    uint32_t            cachedPhotoOutWidth;
+    uint32_t            cachedPhotoOutHeight;
+    uint32_t            cachedPhotoFlags;
 
     // --- buffer context ---
     BypassCameraBufferContext bufCtx;   // +0xD4/...

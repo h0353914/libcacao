@@ -166,8 +166,7 @@ BypassCameraContext::BypassCameraContext() {
     secondResultsById = nullptr;
     pthread_mutex_init(&photoLock, nullptr);
     photoInitialized   = false;
-    shutterDoneSent    = false;
-    _pad2[0] = _pad2[1] = 0;
+    _pad2[0] = _pad2[1] = _pad2[2] = 0;
 
     videoJObj          = nullptr;
     videoMethodId      = nullptr;
@@ -196,13 +195,18 @@ BypassCameraContext::BypassCameraContext() {
     burstInitialized = false;
     _pad4[0] = _pad4[1] = _pad4[2] = 0;
     field_C0 = 0;
-    field_C4 = 4;
+    field_C4 = 0;
     burstJObj = nullptr;
     burstMethodId = nullptr;
     burstSnapshotCb = nullptr;
     cachedVideoOutWidth = 0;
     cachedVideoOutHeight = 0;
     cachedSuperSlowFrameNum = 0;
+    cachedPhotoInWidth = 0;
+    cachedPhotoInHeight = 0;
+    cachedPhotoOutWidth = 0;
+    cachedPhotoOutHeight = 0;
+    cachedPhotoFlags = 0;
 }
 
 __attribute__((visibility("hidden")))
