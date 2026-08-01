@@ -1005,18 +1005,30 @@ int Cacao::getCaps(const cacao::ProcessCtrlCaps::CameraIndex& camIdx,
     return -0x65;
 }
 
+// [根因已確認，20260801] 這兩個 raw (configId, mem, sd) overload 先前的實作
+// 完全沒用到自己的參數，直接呼叫 mCacaoClient 另一個 overload
+// （ProcessConfigBase*）並傳 nullptr，等於是無條件失敗的假實作。反編譯
+// libcacao_client.cpp（0000eb70 BpCacao::setConfig / 0000ec50
+// BpCacao::getConfig，兩者都是本檔案內既有的完整反編譯內容）確認這是走
+// Binder transaction code 4/5 直接送出 (configId, mem, sd) 的低階呼叫，
+// 跟 mCacaoClient->mCacao（sp<ICacao> Binder proxy）的
+// setConfig(int,...)/getConfig(int,...) 完全同構——改為直接透過這個
+// proxy 轉送，不再丟棄呼叫端傳入的參數。
+// 目前這兩個 overload 在本專案自己的呼叫路徑中沒有任何呼叫者（JNI 層
+// 只用 ProcessConfigBase* 版本），但屬於原版公開的 Cacao class API
+// surface，仍依原版行為修正。
 int Cacao::getConfig(int configId, const sp<IMemory>& mem,
                      cacao::ISerialize::SerializedData sd)
 {
-    if (mCacaoClient == nullptr) return -0x65;
-    return mCacaoClient->getConfig(nullptr);  // simplified
+    if (mCacaoClient == nullptr || mCacaoClient->mCacao == nullptr) return -0x65;
+    return mCacaoClient->mCacao->getConfig(configId, mem, sd);
 }
 
 int Cacao::setConfig(int configId, const sp<IMemory>& mem,
                      cacao::ISerialize::SerializedData sd)
 {
-    if (mCacaoClient == nullptr) return -0x65;
-    return mCacaoClient->setConfig(nullptr);  // simplified
+    if (mCacaoClient == nullptr || mCacaoClient->mCacao == nullptr) return -0x65;
+    return mCacaoClient->mCacao->setConfig(configId, mem, sd);
 }
 
 } // namespace android
