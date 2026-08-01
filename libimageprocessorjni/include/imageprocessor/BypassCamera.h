@@ -327,8 +327,12 @@ struct BypassCameraContext {
     uint8_t             _pad4[3];
     uint32_t            field_C0;       // =0
     // [已修正] 舊文件標「=4」是錯的：反編譯 BypassCameraPhoto_changeToPhotoMode
-    // (so_32 @ 0x186dc) 確認這個位置其實是動態存進去的 flags 參數
-    // （param_3[0x31] = param_8），見 cachedPhotoFlags。
+    // (so_32 @ 0x186dc) 確認這個位置其實是動態存進去的第 6 個參數
+    // （param_3[0x31] = param_8）。逐指令反組譯 + smali 交叉比對
+    // （BypassCamera.smali::changeToPhotoMode 呼叫 nativeChangeToPhotoMode 的
+    // 第 6 個 int 是 p4=captureNum，不是 flags）確認其真實語意是 captureNum，
+    // 不是 flags；此欄位目前是 write-only（原版只拿去快取，尚未找到讀取
+    // 處），見 cachedPhotoCaptureNum。
     uint32_t            field_C4;
     jobject             burstJObj;      // +0xC8: NewGlobalRef(thiz)，burst 模組專用
     jmethodID           burstMethodId;  // +0xCC: callbackFromNative methodID（burst 模組專用快取）
@@ -338,7 +342,7 @@ struct BypassCameraContext {
     uint32_t            cachedSuperSlowFrameNum;
 
     // [新增，20260731] 反編譯 BypassCameraPhoto_changeToPhotoMode
-    // (so_32 @ 0x186dc) 確認原版會把 inW/inH/outW/outH/flags 快取進 ctx
+    // (so_32 @ 0x186dc) 確認原版會把 inW/inH/outW/outH/captureNum 快取進 ctx
     // （ctx+0x40/0x44/0x48/0x4c/0xC4），且 BypassCameraBurstBufferManager_
     // createBuffers (so_32 @ 0x1a758) 建立 buffer 時的寬高就是從
     // ctx+0x48/0x4c（mode==0/photo 時）讀出來的，不是從 dequeue 到的
@@ -349,7 +353,7 @@ struct BypassCameraContext {
     uint32_t            cachedPhotoInHeight;
     uint32_t            cachedPhotoOutWidth;
     uint32_t            cachedPhotoOutHeight;
-    uint32_t            cachedPhotoFlags;
+    uint32_t            cachedPhotoCaptureNum;
 
     // --- buffer context ---
     BypassCameraBufferContext bufCtx;   // +0xD4/...

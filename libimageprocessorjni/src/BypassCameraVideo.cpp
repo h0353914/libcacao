@@ -58,6 +58,11 @@ static uint32_t getVideoRecDataspace(const imageprocessor::BypassCameraContext* 
     return pixelCount > 0x000e0fffull ? 0x104u : 0x102u;
 }
 
+// so_32 @ 0x174ac (Java_..._nativeChangeToSuperSlowMode) 反編譯確認：mode 只接受
+// 0 或 1（對應 BypassCamera$SuperSlowMode 剛好只有 SUPER_SLOW_MOTION=0,
+// SUPER_SLOW_SHOT=1 兩個值），mode==0→4, mode==1→5，其餘值原版直接記 log
+// 並回傳 -1（完全不呼叫 cacao stop()/start()）。呼叫端已用 mode==0||mode==1
+// 才會呼叫這裡。
 static uint32_t getSuperSlowModeType(jint mode) {
     return static_cast<uint32_t>(mode) + 4u;
 }
@@ -339,7 +344,7 @@ extern "C" void BypassCameraVideo_finalize(JNIEnv* env, jobject /*thiz*/, imagep
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraVideo_changeToVideoMode(imageprocessor::BypassCameraContext* ctx,
                                          jint mode, jint inW, jint inH,
-                                         jint outW, jint outH, jint flags) {
+                                         jint outW, jint outH, jint fps) {
     if (!ctx || !ctx->cacao) return -1;
 
     // so_32 @ 0x1738c (Java_..._nativeChangeToVideoMode) 反編譯確認：mode>=5 時原版
@@ -371,7 +376,7 @@ extern "C" int BypassCameraVideo_changeToVideoMode(imageprocessor::BypassCameraC
     ctrlMode.field_1c = (uint32_t)outH;
     ctrlMode.field_20 = 1;
     ctrlMode.field_24 = 0;
-    ctrlMode.field_28 = (uint32_t)flags;
+    ctrlMode.field_28 = (uint32_t)fps;  // smali 交叉比對確認第 6 個參數是 fps，不是 flags
 
     ret = ctx->cacao->start(&ctrlMode);
     if (ret != 0) {
@@ -384,12 +389,46 @@ extern "C" int BypassCameraVideo_changeToVideoMode(imageprocessor::BypassCameraC
 // ─────────────────────────────────────────────────────
 // BypassCameraVideo_changeToSuperSlowMode
 // 來自 so_32 @ 0x00009a25
+//
+// [根因已確認，20260801] 逐指令反組譯 so_32 @ 0x199f4（真正的 changeToSuperSlowMode
+// 函式本體，簽名跟 changeToPhotoMode 一樣是「先建暫存 ProcessCtrlMode、再手動
+// 複製欄位到第二個真正送出去的物件」的兩段式流程）發現：
+//   - field_08 = 暫存物件的 field_08 = ctx+0x08 的值（即呼叫端 JNI wrapper
+//     `Java_..._nativeChangeToSuperSlowMode` 用查表把 mode 轉換後存進去的值，
+//     等同我們的 getSuperSlowModeType(mode)——這裡跟 Video 的簡單版一樣，
+//     並非寫死常數，已確認正確，不用改。
+//   - field_20 = 暫存物件建構子內部寫死的常數 1，沒有被覆寫，跟目前程式碼一致。
+//   - field_24 卻是被「先寫後讀」的欄位：程式碼在複製 field_1c 之後、field_20
+//     之前，插入一行把呼叫端倒數第二個 int（Java 端 parameters.fps，也就是
+//     smali 中的 v12）直接寫進暫存物件的 field_24 位置，然後才把 field_24
+//     複製到最終物件——也就是說最終送出去的 field_24 其實是
+//     parameters.fps，不是建構子原本設的常數 0。
+//   - field_28 = 暫存物件建構子第 7 個參數 = 呼叫端倒數第三個 int
+//     （Java 端 changeToSuperSlowMode 方法自己的 int fps 參數，smali 中的
+//     v11，等同 Java 原始碼裡跟 parameters.fps 同名但不同來源的另一個
+//     fps）。
+// 交叉比對 smali（BypassCamera.smali 第 1833 行 changeToSuperSlowMode）確認
+// nativeChangeToSuperSlowMode 的最後 3 個 int 依序是：v11(方法自己的 fps
+// 參數)、v12(parameters.fps)、v13(parameters.frameNum)。我們原本把第 6 個
+// 參數命名為「flags」、第 7 個命名為「fps」，兩個名字都誤導；核對呼叫順序
+// 後確認**實際欄位路由本來就是對的**（field_24←第7個參數、field_28←第6個
+// 參數），純粹是參數命名跟原版語意對不上，這裡改名為 outerFps/parametersFps
+// 反映真實語意，不改變任何行為。完整分析見
+// .tmp/investigation/snapshot_double_progress_findings.md。
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraVideo_changeToSuperSlowMode(imageprocessor::BypassCameraContext* ctx,
                                              jint mode, jint inW, jint inH,
                                              jint outW, jint outH,
-                                             jint flags, jint fps, jint frameNum) {
+                                             jint outerFps, jint parametersFps, jint frameNum) {
     if (!ctx || !ctx->cacao) return -1;
+
+    // so_32 @ 0x174ac 反編譯確認：mode 不是 0 或 1 時原版直接記 log 並回傳 -1，
+    // 完全不呼叫 cacao stop()/start()（跟 changeToVideoMode 的 mode>=5 guard
+    // 是同一種模式，這裡先前漏加）。
+    if (mode != 0 && mode != 1) {
+        ALOGE("%s: invalid mode=%d", __func__, mode);
+        return -1;
+    }
 
     ctx->cachedVideoOutWidth = static_cast<uint32_t>(outW);
     ctx->cachedVideoOutHeight = static_cast<uint32_t>(outH);
@@ -412,8 +451,8 @@ extern "C" int BypassCameraVideo_changeToSuperSlowMode(imageprocessor::BypassCam
     ctrlMode.field_18 = (uint32_t)outW;
     ctrlMode.field_1c = (uint32_t)outH;
     ctrlMode.field_20 = 1;
-    ctrlMode.field_24 = (uint32_t)fps;
-    ctrlMode.field_28 = (uint32_t)flags;
+    ctrlMode.field_24 = (uint32_t)parametersFps;
+    ctrlMode.field_28 = (uint32_t)outerFps;
 
     ret = ctx->cacao->start(&ctrlMode);
     if (ret != 0) {

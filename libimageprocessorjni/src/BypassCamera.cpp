@@ -206,7 +206,7 @@ BypassCameraContext::BypassCameraContext() {
     cachedPhotoInHeight = 0;
     cachedPhotoOutWidth = 0;
     cachedPhotoOutHeight = 0;
-    cachedPhotoFlags = 0;
+    cachedPhotoCaptureNum = 0;
 }
 
 __attribute__((visibility("hidden")))
@@ -298,7 +298,7 @@ BypassCameraContext::~BypassCameraContext() {
 extern "C" int BypassCameraPhoto_initialize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
 extern "C" void BypassCameraPhoto_finalize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
 extern "C" int BypassCameraPhoto_changeToPhotoMode(imageprocessor::BypassCameraContext* ctx,
-                                         jint mode, jint inW, jint inH, jint outW, jint outH, jint flags);
+                                         jint inW, jint inH, jint outW, jint outH, jint captureNum);
 extern "C" int BypassCameraPhoto_requestSnapshotReady(imageprocessor::BypassCameraContext* ctx);
 extern "C" int BypassCameraPhoto_prepareSnapshot(JNIEnv* env,
                                        imageprocessor::BypassCameraContext* ctx,
@@ -318,10 +318,10 @@ extern "C" int BypassCameraPhoto_requestSnapshotFree(imageprocessor::BypassCamer
 extern "C" int BypassCameraVideo_initialize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
 extern "C" void BypassCameraVideo_finalize(JNIEnv* env, jobject thiz, imageprocessor::BypassCameraContext* ctx);
 extern "C" int BypassCameraVideo_changeToVideoMode(imageprocessor::BypassCameraContext* ctx,
-                                         jint mode, jint inW, jint inH, jint outW, jint outH, jint flags);
+                                         jint mode, jint inW, jint inH, jint outW, jint outH, jint fps);
 extern "C" int BypassCameraVideo_changeToSuperSlowMode(imageprocessor::BypassCameraContext* ctx,
                                              jint mode, jint inW, jint inH, jint outW, jint outH,
-                                             jint flags, jint fps, jint frameNum);
+                                             jint outerFps, jint parametersFps, jint frameNum);
 extern "C" int BypassCameraVideo_prepareVideoRecording(JNIEnv* env, imageprocessor::BypassCameraContext* ctx,
                                              jobject surface, jint p1, jint p2, jint p3);
 extern "C" int BypassCameraVideo_prepareSuperSlowRecording(JNIEnv* env, imageprocessor::BypassCameraContext* ctx,
@@ -532,49 +532,71 @@ Java_com_sonymobile_imageprocessor_bypasscamera2_BypassCamera_nativeFinalize(
 
 // ─────────────────────────────────────────────────────
 // nativeChangeToPhotoMode(JIIIIII)I
-// params: handle, mode, inW, inH, outW, outH, flags
+// params: handle, mode, inW, inH, outW, outH, captureNum
+//
+// smali 交叉比對（BypassCamera.smali::changeToPhotoMode）確認 Java 端
+// PhotoMode enum 只有唯一值 NORMAL（ordinal=0），且第 6 個 int 是
+// captureNum，不是 flags。逐指令反組譯 so_32 @ 0x186dc（完整分析見
+// SemcCameraUI/.tmp/investigation/snapshot_double_progress_findings.md）
+// 確認這個內部函式本身根本不吃 mode：傳給 cald 的 ProcessCtrlMode
+// 物件其 mode-type 欄位（field_08）是寫死的常數 0，不是從任何呼叫端
+// 參數讀出來的——mode 只在這層 JNI wrapper 存在（配合 Java 端固定只有
+// 一種 PhotoMode 的事實），不轉發到下面的內部函式。
+// 反編譯這層 wrapper 本身（so_32 @ 0x172dc）額外確認：原版在轉呼叫前先
+// 檢查 mode==0，不是 0 就直接記 log、回傳 -1，完全不呼叫內部函式（跟
+// changeToVideoMode 的 mode>=5 guard 是同一種模式），這裡先前漏加。
 // ─────────────────────────────────────────────────────
 extern "C" JNIEXPORT jint JNICALL
 Java_com_sonymobile_imageprocessor_bypasscamera2_BypassCamera_nativeChangeToPhotoMode(
         JNIEnv* env, jobject thiz, jlong nativeHandle,
-        jint mode, jint inW, jint inH, jint outW, jint outH, jint flags) {
+        jint mode, jint inW, jint inH, jint outW, jint outH, jint captureNum) {
+    if (mode != 0) {
+        ALOGE("%s: invalid mode=%d", __func__, mode);
+        return -1;
+    }
 
     imageprocessor::BypassCameraContext* ctx;
     CHECK_CTX(nativeHandle, ctx, -1);
 
-    return BypassCameraPhoto_changeToPhotoMode(ctx, mode, inW, inH, outW, outH, flags);
+    return BypassCameraPhoto_changeToPhotoMode(ctx, inW, inH, outW, outH, captureNum);
 }
 
 // ─────────────────────────────────────────────────────
 // nativeChangeToVideoMode(JIIIIII)I
-// params: handle, mode, inW, inH, outW, outH, flags
+// params: handle, mode, inW, inH, outW, outH, fps
+// smali 交叉比對（BypassCamera.smali::changeToVideoMode）確認第 6 個 int
+// 是方法自己的 fps 參數（p4），不是 flags。
 // ─────────────────────────────────────────────────────
 extern "C" JNIEXPORT jint JNICALL
 Java_com_sonymobile_imageprocessor_bypasscamera2_BypassCamera_nativeChangeToVideoMode(
         JNIEnv* env, jobject thiz, jlong nativeHandle,
-        jint mode, jint inW, jint inH, jint outW, jint outH, jint flags) {
+        jint mode, jint inW, jint inH, jint outW, jint outH, jint fps) {
 
     imageprocessor::BypassCameraContext* ctx;
     CHECK_CTX(nativeHandle, ctx, -1);
 
-    return BypassCameraVideo_changeToVideoMode(ctx, mode, inW, inH, outW, outH, flags);
+    return BypassCameraVideo_changeToVideoMode(ctx, mode, inW, inH, outW, outH, fps);
 }
 
 // ─────────────────────────────────────────────────────
 // nativeChangeToSuperSlowMode(JIIIIIIII)I
-// params: handle, mode, inW, inH, outW, outH, flags, fps, frameNum
+// params: handle, mode, inW, inH, outW, outH, outerFps, parametersFps, frameNum
+// smali 交叉比對（BypassCamera.smali::changeToSuperSlowMode）確認最後兩個
+// int 分別是方法自己的 fps 參數（outerFps）與 SuperSlowRecordingParameters.fps
+// （parametersFps）——Java 端真的有兩個不同來源、都叫 fps 的值，不是我們的
+// 命名錯誤。
 // ─────────────────────────────────────────────────────
 extern "C" JNIEXPORT jint JNICALL
 Java_com_sonymobile_imageprocessor_bypasscamera2_BypassCamera_nativeChangeToSuperSlowMode(
         JNIEnv* env, jobject thiz, jlong nativeHandle,
         jint mode, jint inW, jint inH, jint outW, jint outH,
-        jint flags, jint fps, jint frameNum) {
+        jint outerFps, jint parametersFps, jint frameNum) {
 
     imageprocessor::BypassCameraContext* ctx;
     CHECK_CTX(nativeHandle, ctx, -1);
 
     return BypassCameraVideo_changeToSuperSlowMode(
-            ctx, mode, inW, inH, outW, outH, flags, fps, frameNum);
+            ctx, mode, inW, inH, outW, outH, outerFps, parametersFps, frameNum);
 }
 
 // ─────────────────────────────────────────────────────

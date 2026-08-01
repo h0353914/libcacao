@@ -555,20 +555,20 @@ extern "C" void BypassCameraPhoto_finalize(JNIEnv* env, jobject /*thiz*/, imagep
 // 功能：先呼叫 stop() 重置，建立 ProcessCtrlMode，呼叫 cacao->start(mode) 切換到拍照模式
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraPhoto_changeToPhotoMode(imageprocessor::BypassCameraContext* ctx,
-                                         jint mode, jint inW, jint inH,
-                                         jint outW, jint outH, jint flags) {
+                                         jint inW, jint inH,
+                                         jint outW, jint outH, jint captureNum) {
     if (!ctx || !ctx->cacao) return -1;
 
     // 原始 so_32 @ 0x186dc 反編譯確認：stop() 之後、建構 ProcessCtrlMode 之前，
-    // 原版會先把 inW/inH/outW/outH/flags 快取進 ctx（ctx+0x40/0x44/0x48/0x4c/
-    // 0xC4）。BypassCameraBurstBufferManager_createBuffers 建立 buffer 時的
-    // 寬高就是從 ctx+0x48/0x4c 讀出來的，不是從 dequeue 到的 buffer 自己的
-    // width/height 讀，這裡補上這個快取。
+    // 原版會先把 inW/inH/outW/outH/captureNum 快取進 ctx（ctx+0x40/0x44/0x48/
+    // 0x4c/0xC4）。BypassCameraBurstBufferManager_createBuffers 建立 buffer
+    // 時的寬高就是從 ctx+0x48/0x4c 讀出來的，不是從 dequeue 到的 buffer 自己
+    // 的 width/height 讀，這裡補上這個快取。
     ctx->cachedPhotoInWidth = (uint32_t)inW;
     ctx->cachedPhotoInHeight = (uint32_t)inH;
     ctx->cachedPhotoOutWidth = (uint32_t)outW;
     ctx->cachedPhotoOutHeight = (uint32_t)outH;
-    ctx->cachedPhotoFlags = (uint32_t)flags;
+    ctx->cachedPhotoCaptureNum = (uint32_t)captureNum;
 
     // 原始 so_32 @ 0x186dc: 先呼叫 stop() 重置 gateway 狀態
     int ret = ctx->cacao->stop();
@@ -579,14 +579,25 @@ extern "C" int BypassCameraPhoto_changeToPhotoMode(imageprocessor::BypassCameraC
         }
     }
 
+    // [根因已確認，20260801] 逐指令反組譯 so_32 @ 0x186dc 確認：這個函式
+    // 實際建構、傳給 cacao->start() 的 ProcessCtrlMode 物件是「先建一個暫存
+    // 物件、再手動複製欄位到第二個真正送出去的物件」的兩段式流程；追蹤到
+    // 底發現最終送出物件的 field_08（mode-type）是寫死的常數 0（組合語言
+    // 直接 `movs r5,#0`、`str r5,[sp,#0x48]`，不是從任何呼叫端參數或 ctx
+    // 欄位讀出來的）。這與 Java 端 smali 交叉比對的結果一致：
+    // BypassCamera$PhotoMode enum 只有唯一值 NORMAL（ordinal=0），原版乾脆
+    // 把這個位置寫死，不透過參數傳遞。因此這裡也直接寫死 0，不接受/使用
+    // mode 參數（呼叫端 JNI wrapper 也已同步移除轉發，見 BypassCamera.cpp
+    // 的 nativeChangeToPhotoMode）。完整反組譯過程記錄於
+    // .tmp/investigation/snapshot_double_progress_findings.md。
     cacao::ProcessCtrlMode ctrlMode;
-    ctrlMode.field_08 = (uint32_t)mode;   // mode type（PhotoMode enum 值）
+    ctrlMode.field_08 = 0;
     ctrlMode.field_0c = (int32_t)ctx->cameraMode;  // camera index (facing: 0=back, 1=front)
     ctrlMode.field_10 = (uint32_t)inW;
     ctrlMode.field_14 = (uint32_t)inH;
     ctrlMode.field_18 = (uint32_t)outW;
     ctrlMode.field_1c = (uint32_t)outH;
-    ctrlMode.field_20 = (uint32_t)flags;
+    ctrlMode.field_20 = (uint32_t)captureNum;
     ctrlMode.field_24 = 0;
     ctrlMode.field_28 = 0;
 
