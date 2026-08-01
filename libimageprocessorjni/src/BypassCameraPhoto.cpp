@@ -291,40 +291,42 @@ void SnapshotCallback::onHandleResult(const cacao::ProcessResultBase* result) {
 
 // ─────────────────────────────────────────────────────
 // SnapshotFreeCallback::onHandleResult
-// 來自 so_32 @ 0x00008f3d
-// 呼叫 callbackFromNative(0x1e, 0, 1, false, false, false, 0, 0xff, 0xff)
+// 來自 so_32 @ 0x00018f3c（完整反編譯）
+//
+// [根因已確認並修正，20260802] 這裡先前有一段「掃描 byBufferPtr 找
+// state==2 的 entry、queue 回 Surface」的邏輯（附註「QV700WMR11 上
+// type=4 的 handleResult 不被 cald 呼叫...此時 queue buffer 是最安全的
+// 時機」），完全是原版沒有的邏輯。逐指令反組譯 so_32 @ 0x18f3c 確認原版
+// 這個函式只做兩件事：lock photoLock、呼叫
+// callbackFromNative(0x1e,...)，完全沒有碰任何 buffer。
+//
+// 這段虛構邏輯是實際拍照檔案損毀的根因：`requestSnapshotFree` 是與這次
+// 拍照請求無關的另一個請求，它的 onHandleResult 可能在 cald 真正把 JPEG
+// 寫進 buffer **之前**就先觸發，用「隨便找一個 state==2 的 buffer」這種
+// 不精確的方式把**這次拍照尚未寫入資料的 buffer**提前 queue 回
+// Surface——Java 端 ImageReader 收到這個全零 buffer 就當作照片存檔；
+// 等真正的 SnapshotCallback::onHandleResult 完成後想把同一個 buffer
+// queue 回去時，BufferQueue 回報「slot not owned by producer」(-22)，
+// 真正編碼完成的 JPEG 資料因此被丟棄，實際存到 DCIM 的檔案永遠是空的
+// buffer（大小剛好等於 jpegBufferSize 或某個中間值）。
+// 已確認這個 bug 從最早的「restore functionality」commit 就存在，跟本次
+// 稽核的其他修正無關；完整診斷過程見
+// .tmp/investigation/snapshot_double_progress_findings.md。
 // ─────────────────────────────────────────────────────
 void SnapshotFreeCallback::onHandleResult(const cacao::ProcessResultBase* result) {
     BypassCameraContext* ctx = getCtxFromResult(result);
     if (!ctx) return;
 
-    // QV700WMR11 上 type=4 的 handleResult 不被 cald 呼叫，
-    // 在 snapshotFree 完成時 Java 已完全處理 CB_SHUTTER_DONE 且狀態機就緒，
-    // 此時 queue buffer 是最安全的時機。
     pthread_mutex_lock(&ctx->photoLock);
     if (ctx->photoInitialized) {
-        BypassCameraBufferContext* bc = &ctx->bufCtx;
-        if (bc->byBufferPtr) {
-            for (size_t i = 0; i < bc->byBufferPtr->size(); i++) {
-                BufEntry* e = (*bc->byBufferPtr)[i].value;
-                if (e->state == 2) {
-                    e->state = 3;
-                    BypassCameraBurstBufferManager_queueBuffer(ctx, e);
-                    ALOGD("SnapshotFreeCallback::onHandleResult: queued entry=%p tag=%d",
-                          e, e->tag);
-                    break;
-                }
-            }
-        }
+        // CB_SNAPSHOT_FREE_DONE = 0x1e
+        callPhotoCallback(ctx,
+                          CB_SNAPSHOT_FREE_DONE,
+                          0, 1,
+                          false, false, false,
+                          0, 0xff, 0xff);
     }
     pthread_mutex_unlock(&ctx->photoLock);
-
-    // CB_SNAPSHOT_FREE_DONE = 0x1e
-    callPhotoCallback(ctx,
-                      CB_SNAPSHOT_FREE_DONE,
-                      0, 1,
-                      false, false, false,
-                      0, 0xff, 0xff);
 }
 
 // Burst Callback constructors / destructors / onHandleProgress
