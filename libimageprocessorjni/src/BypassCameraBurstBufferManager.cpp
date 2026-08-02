@@ -107,10 +107,24 @@ extern "C" int BypassCameraBurstBufferManager_initializeSurface(
         goto fail;
     }
 
-    // 2. SET_SCALING_MODE(1) + SET_BUFFERS_TRANSFORM(0) + SET_USAGE(0)
+    // 2. SET_USAGE64(0x20023) + SET_SCALING_MODE(1) + SET_BUFFERS_TRANSFORM(0)
+    //
+    // [已修正，20260802] 逐指令反組譯確認 perform() 第 2 個呼叫是 cmd=0x1e
+    // (30) = NATIVE_WINDOW_SET_USAGE64（不是 dataspace，這裡先前誤判過一次；
+    // 這個 SDK 的 native_window_set_usage() 本身就是呼叫 SET_USAGE64，所以
+    // 函式名稱沒有問題，問題出在傳入的值），帶入的 64-bit usage 值是
+    // 0x00020023 = GRALLOC_USAGE_HW_CAMERA_WRITE(0x20000) |
+    // GRALLOC_USAGE_SW_READ_OFTEN(0x3) | GRALLOC_USAGE_SW_WRITE_RARELY(0x20)
+    // ——原本傳的是常數 0，完全沒有宣告「camera HAL 會寫入這個 buffer」的
+    // usage flag，對 gralloc 配置這個 JPEG buffer 的方式可能有影響。原版
+    // 呼叫順序也是 SET_USAGE64 在 SET_SCALING_MODE/SET_BUFFERS_TRANSFORM
+    // 之前，這裡一併調整。
+    native_window_set_usage(window,
+            0x20000u   /* GRALLOC_USAGE_HW_CAMERA_WRITE */ |
+            0x3u       /* GRALLOC_USAGE_SW_READ_OFTEN */ |
+            0x20u);    /* GRALLOC_USAGE_SW_WRITE_RARELY */
     native_window_set_scaling_mode(window, NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
     native_window_set_buffers_transform(window, 0);
-    native_window_set_usage(window, 0);
 
     // 3. query(WIDTH) + query(HEIGHT) → getJpegBufferSize
     {
