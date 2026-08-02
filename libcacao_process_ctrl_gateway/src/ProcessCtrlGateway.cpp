@@ -2175,12 +2175,18 @@ int ProcessCtrlGateway::createNativeWindow(ProcessCtrlVideoRecParam* param) {
         if (ret) { errLine = __LINE__; errMsg = "Error while setting data space"; errFile = __FILE__; goto log_err; }
 
         {
+            // [已修正，20260802] 反編譯確認原版這裡呼叫的是 perform cmd=0x1e(30)
+            // = NATIVE_WINDOW_SET_USAGE64，不是 NATIVE_WINDOW_SET_USAGE
+            // （這個常數在這份 SDK 的 system/window.h 裡是「=0，deprecated」的
+            // 舊版 32-bit 版本，跟 SET_USAGE64 是完全不同的兩個 perform
+            // command，name 相似容易看錯）。OR 進去的值 0x20033 本身沒錯，
+            // 只是原本呼叫錯 command id。
             int usage = 0;
             ret = w->query(w, NATIVE_WINDOW_CONSUMER_USAGE_BITS, &usage);
             if (ret) { errLine = __LINE__; errMsg = "Error while getting usage"; errFile = __FILE__; goto log_err; }
 
             usage |= 0x20033;
-            ret = w->perform(w, NATIVE_WINDOW_SET_USAGE, (uint64_t)(uint32_t)usage);
+            ret = w->perform(w, NATIVE_WINDOW_SET_USAGE64, (uint64_t)(uint32_t)usage);
             if (ret) { errLine = __LINE__; errMsg = "Error while setting flags"; errFile = __FILE__; goto log_err; }
         }
 
