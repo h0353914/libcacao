@@ -380,8 +380,16 @@ extern "C" int BypassCameraBurstBufferManager_dequeueBuffer(
 
 // ─────────────────────────────────────────────────────
 // BypassCameraBurstBufferManager_queueBuffer
-// 來自 so_32 @ 0x0001acf5
+// 來自 so_32 @ 0x0001acf5（完整反編譯）
 // 功能：把寫完的 buffer queue 回 Surface，讓 Java ImageReader 接收
+//
+// [已修正，20260802] 逐指令反組譯確認原版 queueBuffer 成功後把
+// entry->state 設為 **4**，不是 0（0 是 cancelBuffer 專用的「真的自由、
+// 可再次 dequeue」狀態）——queueBuffer 是把 buffer 所有權交給 Surface
+// consumer，還沒有被我們重新 dequeue 回來之前不算「自由」，用不同的
+// 狀態值區分。原版也沒有把 entry->fence 重置為 -1（fence 已經被
+// queueBuffer 呼叫本身消耗掉，原版沒有額外清空這個欄位），這裡一併移除
+// 多出來的那行。
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraBurstBufferManager_queueBuffer(
         imageprocessor::BypassCameraContext* ctx,
@@ -394,8 +402,7 @@ extern "C" int BypassCameraBurstBufferManager_queueBuffer(
 
     // Queue buffer 回 Surface — Java ImageReader 會收到 onImageAvailable
     int ret = window->queueBuffer(window, (ANativeWindowBuffer*)entry->anwb, entry->fence);
-    entry->fence = -1;
-    entry->state = 0;  // free
+    entry->state = 4;  // 已交給 consumer，不是 0(free)
 
     if (bc->dequeueCount > 0) bc->dequeueCount--;
 
