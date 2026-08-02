@@ -938,7 +938,7 @@ void CacaoService::Client::onHandleResult(const cacao::ProcessResultBase* result
     sp<ICacaoProcessCallback> resultCallbackSp;
     cacao::ISerialize::SerializedData sd;
     memset(&sd, 0, sizeof(sd));
-    int errCode = 0;
+    Vector<cacao::ImageBuf*>* bufVec = NULL;
     Request* reqResult = NULL;
 
     pthread_mutex_lock(&mMutexRequest);
@@ -949,7 +949,12 @@ void CacaoService::Client::onHandleResult(const cacao::ProcessResultBase* result
         Request* req = *it;
         if (req != NULL && req->getResult() == result) {
             resultCallbackSp = req->getCallback();
-            errCode = req->getErrCode();
+            // so_32 @ 0x19858: vtable[0x14] 是 getBufVector()，不是 getErrCode()——
+            // 回傳值透過堆疊額外參數傳給 notifyResult 的第三個參數 bufs，
+            // 由 BpCacaoProcessCallback::notifyResult 在 transact 後就地清理
+            // ImageBuf 的 native_handle。之前恆傳 nullptr 會導致這些
+            // native_handle/FD 永遠不會被關閉。
+            bufVec = req->getBufVector();
             reqResult = req;
             mRequestList.erase(it);
             pthread_mutex_unlock(&mMutexRequest);
@@ -976,7 +981,7 @@ done:
             "onHandleResult: alloc failed");
     } else {
         if (resultCallbackSp != NULL) {
-            resultCallbackSp->notifyResult(callbackMem, sd, nullptr);
+            resultCallbackSp->notifyResult(callbackMem, sd, bufVec);
         }
     }
 
