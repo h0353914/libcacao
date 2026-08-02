@@ -109,22 +109,30 @@ void SnapshotReadyCallback::onHandleResult(const cacao::ProcessResultBase* resul
         return;
     }
 
-    // 依照原始 .so 邏輯讀取 result 欄位
-    // b1 = field_1c != 0, b2 = field_2c != 0, b3/i1/i2 = bytes of field_2c, i3 = field_30 byte
+    // [已修正，20260802] 逐指令反組譯 so_32 @ 0x18c90 確認 field_2c 是逐
+    // byte 讀取（不是先讀整個 32-bit 再各自判斷）：
+    //   byte0(+0x2c) -> b2＝該 byte != 0（原本誤用整個 field_2c != 0，
+    //   若低 byte 剛好是 0 但其他 byte 非零就會算錯）
+    //   byte1(+0x2d) -> b3
+    //   byte2(+0x2e) -> i1
+    //   byte3(+0x2f) -> i2
+    // field_30(+0x30) -> i3；以上都只在 getResult()==0 時計算。
+    // 失敗分支（getResult()!=0）原版把 b1/b2/b3 全部設 false、i1/i2/i3
+    // 全部設 0xff（原本 i1 誤寫成 0）。
     uint32_t errCode = result->getResult();
     bool b1, b2, b3;
     int i1, i2, i3;
     if (errCode == 0) {
         const auto* r = static_cast<const cacao::ProcessCtrlResult*>(result);
         b1 = (r->field_1c != 0);
-        b2 = (r->field_2c != 0);
+        b2 = (r->field_2c & 0xFF) != 0;
         b3 = ((r->field_2c >> 8)  & 0xFF) != 0;
         i1 = (r->field_2c >> 16) & 0xFF;
         i2 = (r->field_2c >> 24) & 0xFF;
         i3 = r->field_30 & 0xFF;
     } else {
         b1 = b2 = b3 = false;
-        i1 = 0; i2 = 0xFF; i3 = 0xFF;
+        i1 = i2 = i3 = 0xFF;
     }
 
     // CB_SNAPSHOT_READY_DONE = 0xa
@@ -280,11 +288,13 @@ void SnapshotCallback::onHandleResult(const cacao::ProcessResultBase* result) {
     }
 
     // CB_SNAPSHOT_DONE = 0x15
+    // [已修正，20260802] 逐指令反組譯 so_32 @ 0x18e30 確認結尾三個 int
+    // 是 0xff,0xff,0xff（不是 0,0xff,0xff）。
     callPhotoCallback(ctx,
                       CB_SNAPSHOT_DONE,
                       (int)reqId, 1,
                       false, false, false,
-                      0, 0xff, 0xff);
+                      0xff, 0xff, 0xff);
 
     pthread_mutex_unlock(&ctx->photoLock);
 }
@@ -320,11 +330,14 @@ void SnapshotFreeCallback::onHandleResult(const cacao::ProcessResultBase* result
     pthread_mutex_lock(&ctx->photoLock);
     if (ctx->photoInitialized) {
         // CB_SNAPSHOT_FREE_DONE = 0x1e
+        // [已修正，20260802] 逐指令反組譯確認第 2 個 int 參數是 0（不是 1），
+        // 結尾三個 int 是 0xff,0xff,0xff（不是 0,0xff,0xff）——上一輪修正
+        // buffer 誤操作時漏檢查這兩處。
         callPhotoCallback(ctx,
                           CB_SNAPSHOT_FREE_DONE,
-                          0, 1,
+                          0, 0,
                           false, false, false,
-                          0, 0xff, 0xff);
+                          0xff, 0xff, 0xff);
     }
     pthread_mutex_unlock(&ctx->photoLock);
 }
@@ -343,7 +356,13 @@ BurstCallback::~BurstCallback() = default;
 
 // ─────────────────────────────────────────────────────
 // BurstShotPrepareCallback::onHandleResult
-// 來自 so_32 @ 0x00008f99
+// 來自 so_32 @ 0x00018f98（完整反編譯）
+//
+// [已修正，20260802] 原版呼叫 callbackFromNative(0x28, 0, 1, false,
+// isSuccess, false, 0xff, 0xff, 0xff)——isSuccess 是第 2 個 bool
+// （原本誤放到第 1 個 bool），結尾三個 int 是 0xff,0xff,0xff（不是
+// 0,0xff,0xff）。原版失敗時還會多印一行帶錯誤碼的 log，純診斷用途、
+// 不影響行為，這裡不補。
 // ─────────────────────────────────────────────────────
 void BurstShotPrepareCallback::onHandleResult(const cacao::ProcessResultBase* result) {
     BypassCameraContext* ctx = getCtxFromResult(result);
@@ -354,25 +373,29 @@ void BurstShotPrepareCallback::onHandleResult(const cacao::ProcessResultBase* re
     callPhotoCallback(ctx,
                       CB_BURST_PREPARE_DONE,
                       0, 1,
-                      isSuccess, false, false,
-                      0, 0xff, 0xff);
+                      false, isSuccess, false,
+                      0xff, 0xff, 0xff);
 }
 
 // ─────────────────────────────────────────────────────
 // BurstShotFinishCallback::onHandleResult
-// 來自 so_32 @ 0x0000902d
+// 來自 so_32 @ 0x0001902c（完整反編譯）
+//
+// [已修正，20260802] 原版呼叫 callbackFromNative(0x32, 0, 0, false,
+// false, false, 0xff, 0xff, 0xff)——原版根本沒有呼叫 getResult()，三個
+// bool 全部固定 false，第 2 個 int 是 0（不是 1），結尾三個 int 是
+// 0xff,0xff,0xff（不是 0,0xff,0xff）。
 // ─────────────────────────────────────────────────────
 void BurstShotFinishCallback::onHandleResult(const cacao::ProcessResultBase* result) {
     BypassCameraContext* ctx = getCtxFromResult(result);
     if (!ctx) return;
 
-    bool isSuccess = (result->getResult() == 0);
     // CB_BURST_FINISH_DONE = 0x32
     callPhotoCallback(ctx,
                       CB_BURST_FINISH_DONE,
-                      0, 1,
-                      isSuccess, false, false,
-                      0, 0xff, 0xff);
+                      0, 0,
+                      false, false, false,
+                      0xff, 0xff, 0xff);
 }
 
 // ─────────────────────────────────────────────────────
