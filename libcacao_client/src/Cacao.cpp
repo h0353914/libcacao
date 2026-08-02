@@ -494,11 +494,16 @@ int Cacao::CacaoClient::process(const cacao::ProcessParamBase* param,
         pthread_mutex_unlock(&mLock);
         return -0x65;
     }
+    // [已修正，20260802] 反編譯 libcacao_client.cpp 內既有的原版反組譯 dump
+    // （android::Cacao::CacaoClient::process，0xfd28 附近）確認驗證規則其實
+    // 很單純：result==null 就直接失敗（不管 param/listener 是不是也是
+    // null），原本這裡多包了一層「result==null 時才檢查 param/listener」
+    // 的邏輯，讓 result==null 但 param/listener 都給了的情況繼續往下跑，
+    // 跟原版不符。目前專案內所有呼叫點都一定會給 result，這個分支實際上
+    // 不會被觸發，但邏輯本身還是照原版修正。
     if (result == nullptr) {
-        if (param == nullptr || listener == nullptr) {
-            pthread_mutex_unlock(&mLock);
-            return -0x67;
-        }
+        pthread_mutex_unlock(&mLock);
+        return -0x67;
     }
     cacao::ISerialize::SerializedData paramSd;
     memset(&paramSd, 0, sizeof(paramSd));
