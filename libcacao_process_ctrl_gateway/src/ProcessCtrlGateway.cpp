@@ -2147,14 +2147,15 @@ int ProcessCtrlGateway::createNativeWindow(ProcessCtrlVideoRecParam* param) {
     }
 
     {
-        // [已確認] 反編譯 tools_Libcacao/refs/so_32/libcacao_process_ctrl_gateway.so
-        // 的 ProcessCtrlGateway::createNativeWindow（真實位址，非本檔案位址）：
-        // `_Znwj(0x788)` — 這台 a9 (poplar_kddi) 裝置上 sizeof(Surface) 就是 0x788，
-        // 與舊註解引用的「A14 實際為 0x2500」「so_32_a200 binary patch」都是別的
-        // 裝置/版本的數值，不適用於這裡。改用 a9 反編譯確認的 0x788。
-        android::Surface* surf_raw = reinterpret_cast<android::Surface*>(::operator new(0x788));
-        new(surf_raw) android::Surface(gbp, true);
-        sp<android::Surface> surface(surf_raw);
+        // [20260811 修正] 先前用 `::operator new(0x788)` + placement-new 手動配置
+        // Surface 物件，0x788 是反編譯 a9 (poplar_kddi) stock 二進位檔得出的
+        // sizeof(Surface)，只對那個 Android 9 版本的 libgui.so ABI 有效。
+        // 這裡實際連結的是本平台（Android 15）frameworks/native/libs/gui 編出
+        // 的 libgui.so，Surface 類別大小已經不同，用舊的 0x788 配置會導致建構子
+        // 寫入超出配置範圍，造成 heap 損毀（實測：錄影開始時 cacaoserver 於
+        // Surface 建構子內 SIGSEGV）。改回直接 `new`，交給編譯器用它實際連結
+        // 的（正確的）Surface 標頭決定大小。
+        sp<android::Surface> surface = new android::Surface(gbp, true);
 
         ANativeWindow* w = surface.get();
         sp<ANativeWindow> surfSp = w;
