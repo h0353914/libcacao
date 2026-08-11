@@ -18,6 +18,11 @@ cc_library_shared {
 
     defaults: ["libcacao_common_defaults"],
 
+    // System (default): cacaoserver and its whole libcacao_* chain are
+    // system-side again (see libcacao_service/Android.bp), so this no
+    // longer needs to be dual-available -- everything that links it
+    // (libimageprocessorjni, libcacao_service, libcacao_process_ctrl_gateway)
+    // is on the same partition now.
     compile_multilib: "both",
 
     srcs: [
@@ -44,7 +49,6 @@ cc_library_shared {
         "liblog",
         "libhardware",
         "libhidlbase",
-        "libandroid",
         "android.hardware.graphics.mapper@2.0",
         "android.hardware.graphics.allocator@2.0",
         "android.hardware.graphics.common@1.0",

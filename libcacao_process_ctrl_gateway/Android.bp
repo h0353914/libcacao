@@ -15,6 +15,8 @@ cc_library_shared {
 
     defaults: ["libcacao_32bit_build_defaults"],
 
+    // System (default): see libcacao_service/Android.bp for why cacaoserver
+    // and this whole chain stay system-side now instead of vendor:true.
     srcs: [
         "src/ProcessCtrlGatewayBase.cpp",
         "src/ProcessCtrlGateway.cpp",
@@ -31,7 +33,6 @@ cc_library_shared {
         "android.hardware.camera.common@1.0",
         "android.hardware.graphics.allocator@2.0",
         "libhidlbase",
-        "libandroid",
         "libutils",
         "libbinder",
         "libgui",

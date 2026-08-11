@@ -15,6 +15,15 @@ cc_library_shared {
 
     defaults: ["libcacao_32bit_build_defaults"],
 
+    // System (default): cacaoserver must stay system-side so its libbinder
+    // defaults to /dev/binder, matching the app-facing service_manager
+    // SemcCameraUI actually looks in (a vendor:true cacaoserver links
+    // vendor libbinder, which defaults to /dev/vndbinder instead -- the
+    // app can never find it there, confirmed on-device). The
+    // vendor.somc.hardware.camera.* HIDL prebuilts below are marked
+    // vendor_available in yoshino-common instead, same pattern AOSP uses
+    // for its own HAL client libs (e.g. android.hardware.camera.provider@2.4
+    // below), so system-side cacaoserver can still reach them.
     srcs: [
         "src/CacaoService.cpp",
     ],
@@ -32,7 +41,6 @@ cc_library_shared {
         "android.hardware.camera.provider@2.4",
         "android.hardware.graphics.allocator@2.0",
         "libhidlbase",
-        "libandroid",
         "libutils",
         "libui",
         "libbinder",

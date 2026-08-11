@@ -19,74 +19,20 @@ cc_prebuilt_library_shared {
     prefer: true,
     stl: "none",
 
+    // System (default): cacaoserver and its whole libcacao_* chain are
+    // system-side again (see libcacao_service/Android.bp), so libcacao_pal
+    // no longer needs to be dual-available.
     vendor: false,
     vendor_available: false,
     product_specific: false,
     product_available: false,
 }
 
-cc_prebuilt_library_shared {
-    name: "vendor.somc.hardware.camera.provider@1.0",
-    stem: "vendor.somc.hardware.camera.provider@1.0",
-
-    compile_multilib: "32",
-    arch: {
-        arm: {
-            srcs: ["lib/vendor.somc.hardware.camera.provider@1.0.so"],
-        },
-    },
-
-    strip: { none: true },
-    check_elf_files: false,
-    prefer: true,
-    stl: "none",
-
-    vendor: false,
-    vendor_available: false,
-    product_specific: false,
-    product_available: false,
-}
-
-cc_prebuilt_library_shared {
-    name: "vendor.somc.hardware.camera.cacao@3.0",
-    stem: "vendor.somc.hardware.camera.cacao@3.0",
-
-    compile_multilib: "32",
-    arch: {
-        arm: {
-            srcs: ["lib/vendor.somc.hardware.camera.cacao@3.0.so"],
-        },
-    },
-
-    strip: { none: true },
-    check_elf_files: false,
-    prefer: true,
-    stl: "none",
-
-    vendor: false,
-    vendor_available: false,
-    product_specific: false,
-    product_available: false,
-}
-
-cc_prebuilt_library_shared {
-    name: "vendor.somc.hardware.camera.cacao@3.1",
-    stem: "vendor.somc.hardware.camera.cacao@3.1",
-
-    compile_multilib: "32",
-    arch: {
-        arm: {
-            srcs: ["lib/vendor.somc.hardware.camera.cacao@3.1.so"],
-        },
-    },
-
-    strip: { none: true },
-    check_elf_files: false,
-    prefer: true,
-    stl: "none",
-
-    vendor: false,
-    vendor_available: false,
-    product_specific: false,
-    product_available: false,
-}
+// vendor.somc.hardware.camera.{provider@1.0,cacao@3.0,cacao@3.1} intentionally
+// not (re)defined here: on the device tree this branch is actually built
+// against (vendor/sony/camera, wired into yoshino-common), those exact same
+// prebuilt blobs are already defined there and reused as-is by
+// libcacao_process_ctrl_gateway/libcacao_service (now marked
+// vendor_available in yoshino-common so system-side cacaoserver can reach
+// them too — see the comment there). Defining them again here would just be
+// a same-name duplicate module conflict.
