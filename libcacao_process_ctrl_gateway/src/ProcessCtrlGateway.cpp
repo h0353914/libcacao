@@ -961,7 +961,7 @@ void ProcessCtrlGateway::onHandleResultInternal(ResultMsg* msg) {
     int* result = reinterpret_cast<int*>(RI_PTR(item, 0xd0));
     Request* req = reinterpret_cast<Request*>(RI_PTR(item, 4));
 
-    const char* logFile; int logLine; const char* logMsg;
+    const char* logFile; int logLine; const char* logMsg; int logArg = 0;
 
     if (req) {
         uint32_t cvt = convert(static_cast<V30::ProcessType>((V30::ProcessType)RI_U32(item, 0xf0)));
@@ -1039,13 +1039,14 @@ void ProcessCtrlGateway::onHandleResultInternal(ResultMsg* msg) {
             break;
         default: {
             logFile = __FILE__; logLine = __LINE__; logMsg = "Invalid process type %d";
+            logArg = result[5];
             goto log_err;
         }
         }
     }
     goto done_result;
 log_err:
-    PAL_LogPrint(logFile, logLine, 0x100, 1, logMsg);
+    PAL_LogPrint(logFile, logLine, 0x100, 1, logMsg, logArg);
 done_result:
     item->deinit();
     delete item;
