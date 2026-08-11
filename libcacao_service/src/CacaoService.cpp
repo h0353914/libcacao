@@ -391,17 +391,25 @@ int CacaoService::getJpegBufferSize(cacao::ImageSize size) {
 // ── onTransact ───────────────────────────────────────────
 status_t CacaoService::onTransact(uint32_t code, const Parcel& data,
                                   Parcel* reply, uint32_t flags) {
-    // 原始 .so: 只對 tx code 1 (connect) 做權限檢查
-    if (code == 1) {
-        pid_t callingPid = IPCThreadState::self()->getCallingPid();
-        pid_t servicePid = getServicePid();
-        if (callingPid != servicePid) {
-            static const String16 sPermCamera("android.permission.CAMERA");
-            if (!checkCallingPermission(sPermCamera)) {
-                return -1;
-            }
-        }
-    }
+    // 原始 .so: 只對 tx code 1 (connect) 做權限檢查（呼叫方是否持有
+    // android.permission.CAMERA），透過 android::checkCallingPermission()。
+    //
+    // 這裡拿掉了：那個 API（以及底層的 IPermissionController／
+    // PermissionCache）在 AOSP 裡明確標示「not accessible to vendors」——
+    // vendor 變體的 libbinder 根本不會把這個符號編進去
+    // （frameworks/native/libs/binder/IServiceManager.cpp 用
+    // #if !defined(__ANDROID_VNDK__) 整段包住實作），無法在 cacaoserver
+    // 現在所在的 vendor 分割區使用。原版能直接查，是因為當年 cacaoserver
+    // 跟呼叫方同在一個沒有切分 system/vendor 的分割區。
+    //
+    // 取代方案：sepolicy（vendor/sony/camera/sepolicy/cacaoserver.te +
+    // semccamera_app.te）明確把 cacaoserver_service 的存取權限收在只有
+    // SemcCameraUI 專屬 domain（semccamera_app）能用，其他任何
+    // priv_app/platform_app 連 service_manager find 這一步都會被擋。這是
+    // Treble 架構下這類存取控制該做的層級（HAL/vendor 元件用 SELinux MAC
+    // 把關，而不是查 Android permission 字串），語意上也比原本的檢查更嚴
+    // 格：原本只要持有 CAMERA 權限的任何 app 都能連，現在只有這一支 app
+    // 能連。
     return BnCacaoService::onTransact(code, data, reply, flags);
 }
 
