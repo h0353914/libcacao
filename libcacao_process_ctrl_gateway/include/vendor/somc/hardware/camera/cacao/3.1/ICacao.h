@@ -5,6 +5,17 @@
 // 反編譯 V3_1::BnHwCacao::onTransact 確認：code 1-10 直接呼叫 V3_0::BnHwCacao 的
 // _hidl_* helper（等同沿用 V3.0 全部 10 個方法，順序不變），V3.1 只在 code 11
 // 新增唯一一個方法 getCapsV3_1。先前猜測「多一個 padding 方法」是錯的。
+//
+// 2026-08-18 反編譯 V3_1::writeEmbeddedToParcel(CacaoCaps const&, ...) 確認：
+// 呼叫 base V3_0::CacaoCaps 的 writer 後，緊接著在絕對 offset +0xD0 開始寫
+// 自己的擴充欄位（回推 sizeof(V3_0::CacaoCaps)=0xD0，見 3.0/types.h）。
+// 一開始手動算 PLT relocation index 算錯（誤以為呼叫端是
+// _hidl_setColorSpaceForHandle），改用 Ghidra 的 get_function_callees
+// 讓工具自己解析 ARM/Thumb interworking veneer + PLT 間接跳轉後，
+// 確認 +0xD0 和 +0xF8 兩次呼叫（間隔 0x28=40 bytes）都是呼叫
+// V3_0::writeEmbeddedToParcel(SupportedInfo const&, ...)——
+// 也就是說 V3.1 的擴充欄位就是兩個 V3_0::SupportedInfo 實例，
+// 不是先前猜測的 sizes4/formats4/sizes5/formats5 四個獨立 hidl_vec。
 
 #pragma once
 #include <vendor/somc/hardware/camera/cacao/3.0/ICacao.h>
@@ -19,17 +30,12 @@ namespace V3_1 {
 using android::sp;
 using android::hardware::Return;
 
-/* V3.1 CacaoCaps — 比 V3.0 多出 D8~11F 的擴充欄位
- * 從 V3_1::CacaoCaps 拷貝建構子反編譯取得 */
+/* V3.1 CacaoCaps — 繼承 V3_0::CacaoCaps（sizeof=0xD0），自己在 +0xD0/+0xF8
+ * 各加一個 V3_0::SupportedInfo（Ghidra get_function_callees 確認呼叫端）。 */
 struct CacaoCaps : public V3_0::CacaoCaps {
-    uint32_t _pad_d4;                                                    // +0xd4
-    android::hardware::hidl_vec<V3_0::ImageSize> sizes4;                 // +0xd8
-    android::hardware::hidl_vec<uint32_t>  formats4;                     // +0xe8
-    uint32_t field_f8;                                                   // +0xf8
-    uint32_t _pad_fc;                                                    // +0xfc
-    android::hardware::hidl_vec<V3_0::ImageSize> sizes5;                 // +0x100
-    android::hardware::hidl_vec<uint32_t>  formats5;                     // +0x110
-};
+    V3_0::SupportedInfo ext0;                                            // +0xd0 (0x28)
+    V3_0::SupportedInfo ext1;                                            // +0xf8 (0x28)
+};                                                                        // sizeof = 0x120 (288)
 
 class ICacao : public V3_0::ICacao {
 public:

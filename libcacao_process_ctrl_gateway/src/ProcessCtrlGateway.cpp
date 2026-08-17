@@ -1370,7 +1370,15 @@ int ProcessCtrlGateway::passRequest(Request* req) {
     int retVal;
     ResultItem* item = new ResultItem();
 
-    V30::Param param;
+    /* 2026-08-18：Param 現在真的內含 hidl_string/hidl_handle×2/hidl_vec 成員
+     * （不再是純 POD 的扁平 byte array），`V30::Param param;` 這種具名變數
+     * 宣告會讓編譯器在函式結尾自動幫這些成員跑一次解構子，跟下面
+     * paramVec/paramHdl2/paramHdl1/paramStr 的手動解構重複，hidl_vec/
+     * hidl_string 若擁有 heap buffer 會被 double free。改成跟
+     * processInternal/processAsyncInternal 一致的 raw buffer + placement-new
+     * 手法，避免編譯器插入的隱式解構子。 */
+    alignas(8) uint8_t paramBuf[sizeof(V30::Param)];
+    memset(paramBuf, 0, sizeof(paramBuf));
 
     int paramObjPtr = *reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(req) + 0x10);
     uint32_t rawType = 0;
@@ -1379,13 +1387,13 @@ int ProcessCtrlGateway::passRequest(Request* req) {
     }
     uint32_t convertedType = convert(static_cast<ProcessType>(rawType));
 
-    uint8_t* pBuf = reinterpret_cast<uint8_t*>(&param);
+    uint8_t* pBuf = paramBuf;
     auto* paramStr  = new (pBuf + 0x30) android::hardware::hidl_string();
     auto* paramHdl1 = new (pBuf + 0x78) android::hardware::hidl_handle();
     auto* paramHdl2 = new (pBuf + 0x98) android::hardware::hidl_handle();
     auto* paramVec  = reinterpret_cast<android::hardware::hidl_vec<V30::ImageBufInfo>*>(pBuf + 0xB8);
 
-    int cpErr = copyProcessCtrlParam(req, &param);
+    int cpErr = copyProcessCtrlParam(req, reinterpret_cast<V30::Param*>(paramBuf));
     if (cpErr < 0) {
         retVal = -0x6f;
         goto err_cleanup;
@@ -1396,7 +1404,7 @@ int ProcessCtrlGateway::passRequest(Request* req) {
         RI_PTR(item, 0xd0) = reinterpret_cast<void*>(
             *reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(req) + 0x10));
         RI_PTR(item, 4) = req;
-        RI_U32(item, 8) = *reinterpret_cast<uint32_t*>(&param);
+        RI_U32(item, 8) = *reinterpret_cast<uint32_t*>(pBuf);
 
         /* block copy: item+0x10..0x2C ← pSrc+0x04..0x20 (8×u32) */
         __aeabi_memcpy8(RI_U8(item, 0x10), pSrc + 0x04, 32);
@@ -1447,7 +1455,7 @@ int ProcessCtrlGateway::passRequest(Request* req) {
             *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(this) + 0x2f4));
         const V30::Result& resultRef = *reinterpret_cast<const V30::Result*>(RI_U8(item, 0xd8));
-        auto ret = svc->processAsync(param, resultRef);
+        auto ret = svc->processAsync(*reinterpret_cast<const V30::Param*>(paramBuf), resultRef);
 
         paramVec->~hidl_vec<V30::ImageBufInfo>();
         paramHdl2->~hidl_handle();

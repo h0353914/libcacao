@@ -200,40 +200,57 @@ static inline void putU32(uint8_t* data, uint32_t offset, uint32_t val) {
  *
  * Total = 0x262C
  */
+// 2026-08-18 CacaoCaps 從扁平猜測改成巢狀具名子結構（VideoStabilizationCaps/
+// SuperSlowCaps，見 types.h 註解），這裡跟著改對應欄位。Section 1~4a 的
+// app-facing 攤平 byte layout 本身沒有變（那是驗證過的既有格式），只是
+// 「從哪個 HIDL 欄位讀值」跟著新結構走：
+//   Section 1（4 個 vec）  ← VideoStabilizationCaps 的 sizes0/formats0/sizes1/formats1
+//   Section 2（1 對 vec）  ← CacaoCaps 自己的 sizes/formats
+//   Section 3（1 對 vec + extra0）← SuperSlowCaps 的 sizes/formats0/formats1
+//   Section 4a 兩個純量   ← VideoStabilizationCaps/SuperSlowCaps 各自的
+//                           leading _reserved[0]（對應舊版 field_00/field_80）
+// 這個對應順序是依「vec 數量與宣告順序都對得上（4 個 ImageSize vec + 5 個
+// uint32 vec，一個不多一個不少）」推出來的，不是重新從 cacaoserver 自己的
+// getCaps() 實作反編譯逐一驗證過，實機測試時要順便留意 getCaps() 相關的相機
+// 能力顯示是否正常。
 static bool flattenCacaoCapsV30(uint8_t* data,
                                 const V3_0::CacaoCaps& c) {
+    const auto& vsc = c.videoStabilization;
+    const auto& ssc = c.superSlow;
+
     // 先驗證所有 vec size ≤ 128
-    if (c.sizes0.size() > 128 || c.formats0.size() > 128 ||
-        c.sizes1.size() > 128 || c.formats1.size() > 128 ||
-        c.sizes2.size() > 128 || c.formats2.size() > 128 ||
-        c.sizes3.size() > 128 || c.formats3.size() > 128 ||
-        c.extra0.size() > 128)
+    if (vsc.sizes0.size() > 128 || vsc.formats0.size() > 128 ||
+        vsc.sizes1.size() > 128 || vsc.formats1.size() > 128 ||
+        c.sizes.size() > 128 || c.formats.size() > 128 ||
+        ssc.sizes.size() > 128 || ssc.formats0.size() > 128 ||
+        ssc.formats1.size() > 128)
         return false;
 
-    // Section 1
-    putU32(data, 0x0000, c.field_00);
-    putU32(data, 0x0004, c.sizes0.size());
-    flattenSizes(data, 0x0008, c.sizes0, 128);
-    flattenU32  (data, 0x0408, c.formats0, 128);
-    putU32(data, 0x0608, c.sizes1.size());
-    flattenSizes(data, 0x060C, c.sizes1, 128);
-    flattenU32  (data, 0x0A0C, c.formats1, 128);
+    // Section 1（VideoStabilizationCaps）
+    putU32(data, 0x0000, vsc._reserved0[0]);
+    putU32(data, 0x0004, vsc.sizes0.size());
+    flattenSizes(data, 0x0008, vsc.sizes0, 128);
+    flattenU32  (data, 0x0408, vsc.formats0, 128);
+    putU32(data, 0x0608, vsc.sizes1.size());
+    flattenSizes(data, 0x060C, vsc.sizes1, 128);
+    flattenU32  (data, 0x0A0C, vsc.formats1, 128);
 
-    // Section 2
-    putU32(data, 0x0C0C, c.sizes2.size());
-    flattenSizes(data, 0x0C10, c.sizes2, 128);
-    flattenU32  (data, 0x1010, c.formats2, 128);
+    // Section 2（CacaoCaps 自己的 vec）
+    putU32(data, 0x0C0C, c.sizes.size());
+    flattenSizes(data, 0x0C10, c.sizes, 128);
+    flattenU32  (data, 0x1010, c.formats, 128);
 
-    // Section 3
-    putU32(data, 0x1210, c.field_80);
-    putU32(data, 0x1214, c.sizes3.size());
-    flattenSizes(data, 0x1218, c.sizes3, 128);
-    flattenU32  (data, 0x1618, c.formats3, 128);
-    flattenU32  (data, 0x1818, c.extra0, 128);
+    // Section 3（SuperSlowCaps）
+    putU32(data, 0x1210, ssc._reserved0[0]);
+    putU32(data, 0x1214, ssc.sizes.size());
+    flattenSizes(data, 0x1218, ssc.sizes, 128);
+    flattenU32  (data, 0x1618, ssc.formats0, 128);
+    flattenU32  (data, 0x1818, ssc.formats1, 128);
 
-    // Section 4a
-    putU32(data, 0x1A18, c.field_c0);
-    putU32(data, 0x1A1C, c.field_c4);
+    // Section 4a — 對應舊版 field_c0/field_c4，就是促成 SuperSlowCaps 尾端
+    // 補上 _reserved1[2] 的那兩個純量（見 types.h 的 SuperSlowCaps 註解）
+    putU32(data, 0x1A18, ssc._reserved1[0]);
+    putU32(data, 0x1A1C, ssc._reserved1[1]);
 
     // Section 4b 全零（V3.0 無 sizes4/5）
     return true;
@@ -245,19 +262,21 @@ static bool flattenCacaoCapsV31(uint8_t* data,
     if (!flattenCacaoCapsV30(data, c))
         return false;
 
-    // 驗證 V3.1 vec size
-    if (c.sizes4.size() > 128 || c.formats4.size() > 128 ||
-        c.sizes5.size() > 128 || c.formats5.size() > 128)
+    // Section 4b — V3.1 擴充：ext0/ext1 都是 V3_0::SupportedInfo（Ghidra
+    // get_function_callees 確認），欄位對應方式跟 flattenCacaoCapsV30 一樣，
+    // 只保留每個 SupportedInfo 開頭那個保留字給 app（對應舊版 _pad_d4 那格，
+    // 其餘保留字目前沒有已知的 app-facing 對應）。
+    if (c.ext0.sizes.size() > 128 || c.ext0.formats.size() > 128 ||
+        c.ext1.sizes.size() > 128 || c.ext1.formats.size() > 128)
         return false;
 
-    // Section 4b — V3.1 擴充
-    putU32(data, 0x1A20, c._pad_d4);
-    putU32(data, 0x1A24, c.sizes4.size());
-    flattenSizes(data, 0x1A28, c.sizes4, 128);
-    flattenU32  (data, 0x1E28, c.formats4, 128);
-    putU32(data, 0x2028, c.sizes5.size());
-    flattenSizes(data, 0x202C, c.sizes5, 128);
-    flattenU32  (data, 0x242C, c.formats5, 128);
+    putU32(data, 0x1A20, c.ext0._reserved0[0]);
+    putU32(data, 0x1A24, c.ext0.sizes.size());
+    flattenSizes(data, 0x1A28, c.ext0.sizes, 128);
+    flattenU32  (data, 0x1E28, c.ext0.formats, 128);
+    putU32(data, 0x2028, c.ext1.sizes.size());
+    flattenSizes(data, 0x202C, c.ext1.sizes, 128);
+    flattenU32  (data, 0x242C, c.ext1.formats, 128);
     return true;
 }
 

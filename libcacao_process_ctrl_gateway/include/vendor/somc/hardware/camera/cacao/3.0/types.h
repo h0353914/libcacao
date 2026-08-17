@@ -5,9 +5,17 @@
 // 2026-08-17 用 Ghidra headless（8091, so_32/vendor.somc.hardware.camera.cacao@3.0.so）
 // 反編譯 BnHwCacao::onTransact 與 dynsym 校正：
 //   - enum 真實名稱是 CameraIndex（非 CameraId）、ControlMode（非 ModeData）
-//   - CacaoCaps 實際內嵌 JpegSetting/VideoHFRCaps/SuperSlowCaps/SupportedInfo/
-//     VideoStabilizationCaps（見 writeEmbeddedToParcel 的 overload 簽章），
-//     欄位精確 layout 仍待進一步反編譯，這裡先保留舊的扁平猜測 + TODO
+//
+// 2026-08-18 進一步反編譯 writeEmbeddedToParcel(CacaoCaps/VideoStabilizationCaps/
+// SuperSlowCaps/SupportedInfo const&, ...) 確認 CacaoCaps 真實是巢狀具名子結構
+// （VideoStabilizationCaps + SuperSlowCaps），不是先前那份扁平 sizes0..formats3
+// 陣列猜測。用組合語言核對過 hidl_vec<T> 在此 ABI 上 buffer 在 vec+0、count 在
+// vec+8（hidl_pointer 為跨 32/64-bit 相容固定占 8 bytes），故只要用真正的
+// android::hardware::hidl_vec<T> 型別，位元組佈局就會自動吻合，不需要手動兜 offset。
+// JpegSetting/VideoHFRCaps 存在於 dynsym 但目前找不到任何呼叫端把它們接進
+// getCaps()/getCapsV3_1() 的鏈路，暫不處理。V3_1::CacaoCaps 的擴充欄位
+// （base V3_0::CacaoCaps 之後、+0xD0 與 +0xF8 各一個約 40 bytes 的子結構）
+// 卡在一個 ARM/Thumb interworking veneer + PLT 間接跳轉，還沒解出真正型別。
 
 #pragma once
 #include <stdint.h>
@@ -50,38 +58,60 @@ struct ImageSize {
     uint32_t height;
 };
 
-/* CacaoCaps V3.0 — getCaps 回傳的結構
- * 從 V3_1::CacaoCaps 拷貝建構子反編譯得到欄位佈局
- * 包含多個 hidl_vec 欄位（ImageSize 和 unsigned_int 配對）
- * V3.0 結構大小約 0xD4 bytes */
-struct CacaoCaps {
-    uint32_t field_00;                                                   // +0x00
-    uint32_t field_04;                                                   // +0x04
-    uint32_t field_08;                                                   // +0x08
-    uint32_t _pad0c;                                                     // +0x0c
+/* SupportedInfo — 2026-08-18 反編譯 writeEmbeddedToParcel(SupportedInfo const&, ...)
+ * 確認：兩個 hidl_vec 欄位，中間/前面各留白（不需要 embedded marshalling 的
+ * 純量欄位，語意未知，用 _reserved 佔位——欄位順序與型別對 wire 正確就夠，
+ * 名稱不影響序列化）。VideoHFRCaps 的 writeEmbeddedToParcel 是完全相同的
+ * 函式位址，應是 .hal 裡對同一結構的 typedef，故沿用同一份定義。 */
+struct SupportedInfo {
+    uint32_t _reserved0[2];                                              // +0x00 (8 bytes)
+    android::hardware::hidl_vec<ImageSize> sizes;                        // +0x08
+    android::hardware::hidl_vec<uint32_t>  formats;                      // +0x18
+};                                                                        // sizeof = 0x28 (40)
+using VideoHFRCaps = SupportedInfo;
+
+/* SuperSlowCaps — 反編譯 writeEmbeddedToParcel(SuperSlowCaps const&, ...) 確認
+ * 三個 hidl_vec 到 +0x40 為止。尾端 _reserved1[4] 的大小（16 bytes，非單靠
+ * writeEmbeddedToParcel 能看出來）是從 V3_1::CacaoCaps 交叉驗證：反編譯
+ * V3_1::writeEmbeddedToParcel(CacaoCaps) 直接呼叫 base V3_0::CacaoCaps 的
+ * writer 後，緊接著在絕對 offset +0xD0 開始寫自己的擴充欄位（見 3.1/ICacao.h），
+ * 也就是編譯器認定 sizeof(V3_0::CacaoCaps)=0xD0，回推 SuperSlowCaps=0x50。
+ * 舊版 app-facing flattenCacaoCapsV30 攤平格式只用了尾端 4 個保留字中的
+ * 前兩個（field_c0/field_c4），另外兩個目前沒有已知的 app-facing 對應。 */
+struct SuperSlowCaps {
+    uint32_t _reserved0[4];                                              // +0x00 (16 bytes)
+    android::hardware::hidl_vec<ImageSize> sizes;                        // +0x10
+    android::hardware::hidl_vec<uint32_t>  formats0;                     // +0x20
+    android::hardware::hidl_vec<uint32_t>  formats1;                     // +0x30
+    uint32_t _reserved1[4];                                              // +0x40 (16 bytes)
+};                                                                        // sizeof = 0x50 (80)
+
+/* VideoStabilizationCaps — 反編譯 writeEmbeddedToParcel(VideoStabilizationCaps
+ * const&, ...) 確認四個 hidl_vec 欄位；總大小 0x60 是從 CacaoCaps 內嵌它之後
+ * 緊接著下一個欄位（sizes @+0x60）反推確認，不是猜測。 */
+struct VideoStabilizationCaps {
+    uint32_t _reserved0[4];                                              // +0x00 (16 bytes)
     android::hardware::hidl_vec<ImageSize> sizes0;                       // +0x10
     android::hardware::hidl_vec<uint32_t>  formats0;                     // +0x20
-    uint32_t field_30;                                                   // +0x30
-    uint32_t _pad34;                                                     // +0x34
+    uint32_t _reserved1[2];                                              // +0x30 (8 bytes)
     android::hardware::hidl_vec<ImageSize> sizes1;                       // +0x38
     android::hardware::hidl_vec<uint32_t>  formats1;                     // +0x48
-    uint32_t field_58;                                                   // +0x58
-    uint32_t _pad5c;                                                     // +0x5c
-    android::hardware::hidl_vec<ImageSize> sizes2;                       // +0x60
-    android::hardware::hidl_vec<uint32_t>  formats2;                     // +0x70
-    uint32_t field_80;                                                   // +0x80
-    uint32_t _pad84;                                                     // +0x84
-    uint32_t field_88;                                                   // +0x88
-    uint32_t _pad8c;                                                     // +0x8c
-    android::hardware::hidl_vec<ImageSize> sizes3;                       // +0x90
-    android::hardware::hidl_vec<uint32_t>  formats3;                     // +0xa0
-    android::hardware::hidl_vec<uint32_t>  extra0;                       // +0xb0
-    uint32_t field_c0;                                                   // +0xc0
-    uint32_t field_c4;                                                   // +0xc4
-    uint32_t field_c8;                                                   // +0xc8
-    uint32_t field_cc;                                                   // +0xcc
-    uint32_t field_d0;                                                   // +0xd0
-};
+    uint32_t _reserved2[2];                                              // +0x58 (8 bytes，補滿到 0x60)
+};                                                                        // sizeof = 0x60 (96，CacaoCaps context 確認)
+
+/* CacaoCaps V3.0 — getCaps 回傳的結構。
+ * 2026-08-18 反編譯 writeEmbeddedToParcel(CacaoCaps const&, ...) 完全推翻先前
+ * 「一堆 sizes0..formats3 扁平陣列」的猜測：CacaoCaps 其實是巢狀具名子結構——
+ * 開頭直接內嵌 VideoStabilizationCaps（reinterpret_cast this 呼叫，代表它是
+ * CacaoCaps 的第一個成員），接著兩個 hidl_vec，最後內嵌 SuperSlowCaps。
+ * SuperSlowCaps 尾端大小用 V3_1::CacaoCaps 的擴充欄位絕對 offset 交叉驗證
+ * 確認（見上方註解），sizeof(CacaoCaps)=0xD0 是編譯器實際採用的值，不是估算。 */
+struct CacaoCaps {
+    VideoStabilizationCaps videoStabilization;                           // +0x00 (0x60)
+    android::hardware::hidl_vec<ImageSize> sizes;                        // +0x60
+    android::hardware::hidl_vec<uint32_t>  formats;                      // +0x70
+    SuperSlowCaps superSlow;                                             // +0x80 (0x50)
+};                                                                        // sizeof = 0xD0 (208)
 
 /* 處理型別（ProcessType），從 convert() 輸入觀察 */
 enum class ProcessType : uint32_t {
@@ -147,14 +177,26 @@ struct Event {
     uint32_t reserved[3];
 };
 
-/* Param — copyProcessCtrlParam 目標結構
- * 大小 0xC8 bytes（從 Ghidra memclr(param_3, 200) 推算）
- * processType 在 +0x00，内有 hidl_handle、hidl_vec<ImageBufInfo> 等欄位
- */
+/* Param — process()/processAsync() 的參數結構。
+ * 2026-08-18 反編譯 writeEmbeddedToParcel(Param const&, ...) 確認四個內嵌
+ * 欄位：hidl_string@+0x30、hidl_handle@+0x78、hidl_handle@+0x98、
+ * hidl_vec<ImageBufInfo>@+0xb8（element stride <<5＝×32，正好對上已確認的
+ * sizeof(ImageBufInfo)=0x20；函式內對這個 vec 的逐一走訪還直接印證了
+ * ImageBufInfo::handle 真的在元素 +8——與現有 ImageBufInfo 定義一致，不用改）。
+ * 總大小 0xC8，與舊筆記「Ghidra memclr(param_3, 200)」完全吻合，只是這次
+ * 找出了 200 bytes 裡實際的欄位邊界，而不是整塊當作純量佔位。
+ * 欄位之間的空隙（語意未知的純量）用 _reservedN 佔位，不影響 wire 佈局。 */
 struct Param {
-    uint32_t processType;   // +0x00
-    uint8_t  _reserved[0xC4]; // +0x04 … 0xC7
-};
+    uint32_t processType;                        // +0x00
+    uint32_t _reserved0[11];                      // +0x04 (44 bytes)
+    android::hardware::hidl_string name;          // +0x30 (16 bytes)
+    uint32_t _reserved1[14];                      // +0x40 (56 bytes)
+    android::hardware::hidl_handle handle0;       // +0x78 (16 bytes)
+    uint32_t _reserved2[4];                       // +0x88 (16 bytes)
+    android::hardware::hidl_handle handle1;       // +0x98 (16 bytes)
+    uint32_t _reserved3[4];                       // +0xa8 (16 bytes)
+    android::hardware::hidl_vec<ImageBufInfo> bufInfos; // +0xb8 (16 bytes)
+};                                                 // sizeof = 0xC8 (200)
 
 } // namespace V3_0
 } // namespace cacao
