@@ -1,0 +1,26 @@
+/*
+ * vendor.somc.hardware.camera.cacao@3.1::types
+ *
+ * 反推自 vendor.somc.hardware.camera.cacao@3.1.so。
+ */
+
+package vendor.somc.hardware.camera.cacao@3.1;
+
+import @3.0::types;
+
+/* [確認] getCapsV3_1() 回傳的相機能力結構。反編譯
+ * V3_1::writeEmbeddedToParcel(CacaoCaps const&, ...) 確認：先呼叫 base
+ * V3_0::CacaoCaps 的 writer（offset 0，代表繼承關係），接著在絕對 offset
+ * +0xD0 開始寫兩個擴充欄位。一開始手動算 PLT relocation index 對到
+ * _hidl_setColorSpaceForHandle，是算錯的；改用 Ghidra 的
+ * get_function_callees 讓工具自己解析 ARM/Thumb interworking veneer +
+ * PLT 間接跳轉後，確認 +0xD0 和 +0xF8 兩次呼叫（間隔 0x28=40 bytes）
+ * 都是呼叫 V3_0::writeEmbeddedToParcel(SupportedInfo const&, ...)——
+ * 也就是說 V3.1 的擴充欄位就是兩個 V3_0::SupportedInfo 實例，不是先前
+ * 猜測的 sizes4/formats4/sizes5/formats5 四個獨立 hidl_vec。
+ * （HIDL struct 不支援 extends，用組合表示 base 欄位，wire 佈局等價。） */
+struct CacaoCaps {
+    @3.0::CacaoCaps base;
+    @3.0::SupportedInfo ext0;
+    @3.0::SupportedInfo ext1;
+};

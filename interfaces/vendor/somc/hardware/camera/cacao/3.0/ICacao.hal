@@ -1,0 +1,49 @@
+/*
+ * vendor.somc.hardware.camera.cacao@3.0::ICacao
+ *
+ * 反推自 vendor.somc.hardware.camera.cacao@3.0.so。方法宣告順序 = transaction
+ * code，用 Ghidra headless 反編譯 BnHwCacao::onTransact 的完整 switch 逐一
+ * 核對過（2026-08-17），不是照 vtable 偏移量猜的：
+ *
+ *   code 1  setCallback
+ *   code 2  start
+ *   code 3  stop
+ *   code 4  setConfig
+ *   code 5  getConfig
+ *   code 6  process
+ *   code 7  processAsync
+ *   code 8  setColorSpaceForHandle
+ *   code 9  getCaps
+ *   code 10 getJpegBufferSize
+ *
+ * 先前依 vtable 偏移量猜測的 configure(hidl_vec<uint8_t>)、returnBuffer()
+ * 兩個方法實際不存在；setConfig/setColorSpaceForHandle 才是真的。
+ */
+
+package vendor.somc.hardware.camera.cacao@3.0;
+
+import ICacaoCallback;
+
+interface ICacao {
+    setCallback(ICacaoCallback callback) generates (ErrCode err);
+
+    start(ControlMode mode) generates (ErrCode err);
+
+    stop() generates (ErrCode err);
+
+    setConfig(Config config) generates (ErrCode err);
+
+    getConfig(ConfigId configId) generates (Config config, ErrCode err);
+
+    process(Param param) generates (ErrCode err);
+
+    /* result 是呼叫端配置好的 opaque handle buffer（72 bytes），裝置端原封
+     * 不動回傳整塊內容，實際欄位由裝置端（cald）填入。 */
+    processAsync(Param param, Result result) generates (ErrCode err);
+
+    setColorSpaceForHandle(handle bufHandle, DataSpace dataSpace) generates (ErrCode err);
+
+    getCaps(CameraIndex camIdx) generates (CacaoCaps caps, ErrCode err);
+
+    getJpegBufferSize(ImageSize size) generates (uint32_t jpegSize, ErrCode err);
+};

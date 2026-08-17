@@ -1,0 +1,13 @@
+/*
+ * vendor.somc.hardware.camera.device@1.0::ICameraExtensionDevice
+ *
+ * [未研究] 純占位介面。IVendorSomcCameraProvider::
+ * getCameraExtensionDeviceInterface_V1_0() 會回傳這個型別的 sp<>，
+ * 但 libcacao_service 從未實際呼叫這個方法，所以沒有反編譯過它的任何
+ * 方法。留空只為了讓 provider@1.0 的封裝檔案能完整通過 hidl-gen。
+ */
+
+package vendor.somc.hardware.camera.device@1.0;
+
+interface ICameraExtensionDevice {
+};

@@ -1,0 +1,11 @@
+/*
+ * vendor.somc.hardware.camera.cacao@2.0::ICacao
+ *
+ * [未研究] 純占位介面，理由同 cacao@1.0::ICacao——
+ * getCacaoInterface_V2_0() 從未被 libcacao_service 實際呼叫。
+ */
+
+package vendor.somc.hardware.camera.cacao@2.0;
+
+interface ICacao {
+};

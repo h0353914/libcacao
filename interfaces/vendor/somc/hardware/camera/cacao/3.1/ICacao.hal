@@ -1,0 +1,20 @@
+/*
+ * vendor.somc.hardware.camera.cacao@3.1::ICacao
+ *
+ * 反推自 vendor.somc.hardware.camera.cacao@3.1.so。用 Ghidra headless
+ * 反編譯 V3_1::BnHwCacao::onTransact 確認（2026-08-17）：code 1-10 直接
+ * 呼叫 V3_0::BnHwCacao 的 _hidl_* helper（等同沿用 V3.0 全部 10 個方法，
+ * 順序不變），V3.1 只在 code 11 新增唯一一個方法 getCapsV3_1。
+ * 先前猜測「多一個 padding 方法」是錯的。
+ */
+
+package vendor.somc.hardware.camera.cacao@3.1;
+
+import @3.0::ICacao;
+import @3.0::types;
+
+interface ICacao extends @3.0::ICacao {
+    /* code 11 — V3.1 唯一新增方法，回傳 V3.1 CacaoCaps（Ghidra 確認方法名
+     * 為 getCapsV3_1，不是覆寫 V3.0 的 getCaps）。 */
+    getCapsV3_1(@3.0::CameraIndex camIdx) generates (CacaoCaps caps, @3.0::ErrCode err);
+};

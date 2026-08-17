@@ -1,0 +1,48 @@
+/*
+ * vendor.somc.hardware.camera.provider@1.0::IVendorSomcCameraProvider
+ *
+ * 反推自 vendor.somc.hardware.camera.provider@1.0.so。用 Ghidra headless
+ * 反編譯 BnHwVendorSomcCameraProvider::onTransact 確認完整 transaction
+ * code（2026-08-17）：
+ *
+ *   code 1-6  繼承自 android.hardware.camera.provider@2.4::ICameraProvider
+ *             （setCallback, getVendorTags, getCameraIdList,
+ *              isSetTorchModeSupported, getCameraDeviceInterface_V1_x,
+ *              getCameraDeviceInterface_V3_x）
+ *   code 7    getCameraExtensionDeviceInterface_V1_0（自己的擴充，注意排
+ *             在 Cacao 系列之前）
+ *   code 8    getCacaoInterface_V1_0
+ *   code 9    getCacaoInterface_V2_0
+ *   code 10   getCacaoInterface_V3_0
+ *
+ * 先前猜測用 7 個 _pad_* 占位方法冒充 ICameraProvider@2.4、自己只加 3 個
+ * 方法，兩者都是錯的：它是真的繼承 ICameraProvider@2.4，自己實際新增
+ * 4 個方法。
+ */
+
+package vendor.somc.hardware.camera.provider@1.0;
+
+import android.hardware.camera.provider@2.4::ICameraProvider;
+import android.hardware.camera.common@1.0::Status;
+import vendor.somc.hardware.camera.cacao@1.0::ICacao;
+import vendor.somc.hardware.camera.cacao@2.0::ICacao;
+import vendor.somc.hardware.camera.cacao@3.0::ICacao;
+import vendor.somc.hardware.camera.device@1.0::ICameraExtensionDevice;
+
+interface IVendorSomcCameraProvider extends ICameraProvider {
+    /* code 7 — 排在 Cacao 系列之前（Ghidra 確認的實際順序） */
+    getCameraExtensionDeviceInterface_V1_0(string cameraDeviceName)
+        generates (Status status, vendor.somc.hardware.camera.device@1.0::ICameraExtensionDevice device);
+
+    /* code 8 — 從未被 libcacao_service 實際呼叫，回傳型別是 [未研究] 占位介面 */
+    getCacaoInterface_V1_0()
+        generates (Status status, vendor.somc.hardware.camera.cacao@1.0::ICacao service);
+
+    /* code 9 — 同上，從未被實際呼叫 */
+    getCacaoInterface_V2_0()
+        generates (Status status, vendor.somc.hardware.camera.cacao@2.0::ICacao service);
+
+    /* code 10 — libcacao_service 實際使用的方法 */
+    getCacaoInterface_V3_0()
+        generates (Status status, vendor.somc.hardware.camera.cacao@3.0::ICacao service);
+};

@@ -1,0 +1,14 @@
+/*
+ * vendor.somc.hardware.camera.cacao@1.0::ICacao
+ *
+ * [未研究] 純占位介面。IVendorSomcCameraProvider::getCacaoInterface_V1_0()
+ * 會回傳這個型別的 sp<>，但 libcacao_service 從未實際呼叫這個方法
+ * （只用到 getCacaoInterface_V3_0），所以沒有反編譯過它的任何方法。
+ * 這裡刻意留空（只繼承 IBase），只為了讓 provider@1.0 的封裝檔案能完整
+ * 通過 hidl-gen，不代表真實介面只有這些內容。
+ */
+
+package vendor.somc.hardware.camera.cacao@1.0;
+
+interface ICacao {
+};

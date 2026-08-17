@@ -1,0 +1,174 @@
+/*
+ * vendor.somc.hardware.camera.cacao@3.0::types
+ *
+ * 反推自 vendor.somc.hardware.camera.cacao@3.0.so（Ghidra headless 反編譯
+ * onTransact / writeEmbeddedToParcel / readEmbeddedFromParcel，2026-08-17～18）。
+ *
+ * 每個型別的信心度標在自己的註解裡：
+ *   [確認]   位元組級反編譯或雙重獨立驗證（既有實作程式碼 + Ghidra 兩邊對得上）
+ *   [待查]   欄位數量/大小確認，語意/完整列舉值未知，但不影響 wire 格式
+ */
+
+package vendor.somc.hardware.camera.cacao@3.0;
+
+/* [確認] 從 callback 分支邏輯觀察到的用法；OK=0 已核對，其餘值未窮舉，
+ * 但列舉底層一律是 int32_t，未列出的實際值一樣能正確序列化。 */
+enum ErrCode : int32_t {
+    OK          = 0,
+    ERR_GENERAL = -1,
+};
+
+/* [確認] getCaps()/getCapsV3_1() 的相機索引參數，dynsym 確認真實名稱
+ * 是 CameraIndex（不是先前猜的 CameraId）。 */
+enum CameraIndex : int32_t {
+    CAMERA_ID_0 = 0,
+    CAMERA_ID_1 = 1,
+};
+
+/* [待查] getConfig()/setConfig() 的設定 ID，dynsym 確認存在、
+ * ProcessCtrlGateway.cpp 只實際用到 0x65 這個值，完整列舉未知。 */
+enum ConfigId : int32_t {
+    UNKNOWN = 0,
+};
+
+/* [待查] setColorSpaceForHandle() 的參數，dynsym 確認存在，完整列舉未知，
+ * 很可能對應 android.hardware.graphics.common 的 Dataspace，待驗證。 */
+enum DataSpace : int32_t {
+    UNKNOWN = 0,
+};
+
+/* [確認] hidl_vec<ImageSize> 在 CacaoCaps 系列結構中反覆出現。 */
+struct ImageSize {
+    uint32_t width;
+    uint32_t height;
+};
+
+/* [確認] setConfig()/getConfig() 的資料結構。反編譯 BpHwCacao::_hidl_setConfig
+ * 的 writeBuffer(parcel, &config, 8, …) 與 _hidl_getConfig 的
+ * readBuffer(parcel, 8, …) 確認整個結構固定 8 bytes，兩個 uint32_t，
+ * 不是先前猜測的「configId + 256-byte data」。第二欄語意對照
+ * ProcessCtrlGateway::setConfig 送出的 {configId=0, value=dpType}
+ * （Climax 慢動作參數）用法。 */
+struct Config {
+    uint32_t configId;
+    uint32_t value;
+};
+
+/* [確認] start() 的參數結構。反組譯 onStart 確認 9 個 uint32_t（36 bytes），
+ * 對應 ProcessCtrlMode 的 field_08..field_28；後兩個欄位語意未知。 */
+struct ControlMode {
+    uint32_t modeType;
+    int32_t  camIdx;
+    uint32_t maxStreamWidth;
+    uint32_t maxStreamHeight;
+    uint32_t captureWidth;
+    uint32_t captureHeight;
+    uint32_t maxPrdCaptureNum;
+    uint32_t reserved0;
+    uint32_t reserved1;
+};
+
+/* [確認] process()/processAsync() 的 Param 裡 hidl_vec<ImageBufInfo> 的元素
+ * 型別。反編譯 writeEmbeddedToParcel(ImageBufInfo) 確認 hidl_handle 在 +8，
+ * 與既有 ProcessCtrlGateway.cpp 的 REF asm 註解（str w→+0, str h→+4,
+ * handle.setTo→+8, colorFmt→+0x18）完全吻合。 */
+struct ImageBufInfo {
+    uint32_t   width;
+    uint32_t   height;
+    handle     imgHandle;
+    uint32_t   colorFmt;
+    uint32_t   reserved0;
+};
+
+/* [確認] ICacaoCallback::handleProgress/handleResult 的資料結構。
+ * 從 memcpy(dst, src, 0x48) 確認大小固定 72 bytes；反編譯
+ * writeEmbeddedToParcel 系列函式沒有任何一個是拿 Result 當參數，
+ * 代表整塊都是純量欄位（無內嵌 hidl_vec/hidl_handle/hidl_string），
+ * 用不透明 byte array 表示對 wire 格式安全。 */
+struct Result {
+    uint8_t[72] data;
+};
+
+/* [確認] ICacaoCallback::handleEvent 的資料結構，大小約 16 bytes。 */
+struct Event {
+    uint32_t eventType;
+    uint32_t[3] reserved;
+};
+
+/* [確認] process()/processAsync() 的參數結構。反編譯
+ * writeEmbeddedToParcel(Param const&, ...) 確認四個內嵌欄位：
+ * hidl_string@+0x30、hidl_handle@+0x78、hidl_handle@+0x98、
+ * hidl_vec<ImageBufInfo>@+0xb8（element stride ×32，對上已確認的
+ * sizeof(ImageBufInfo)=32；函式內對這個 vec 的逐一走訪還直接印證了
+ * ImageBufInfo.imgHandle 真的在元素 +8）。
+ *
+ * 雙重驗證：ProcessCtrlGateway.cpp 裡 ResultItem 建構子/解構子的
+ * placement-new offset（this+8 為內嵌 Param，+0x38/+0x80/+0xa0/+0xc0
+ * 相對 Param 起點正好是 +0x30/+0x78/+0x98/+0xb8）與 processAsyncInternal()
+ * 的既有詳細註解都跟這裡的反編譯結果完全吻合。
+ * 總大小 0xC8 (200 bytes)，與舊筆記「Ghidra memclr(param_3, 200)」一致。 */
+struct Param {
+    uint32_t processType;
+    uint32_t[11] reserved0;
+    string name;
+    uint32_t[14] reserved1;
+    handle handle0;
+    uint32_t[4] reserved2;
+    handle handle1;
+    uint32_t[3] reserved3;
+    uint32_t bufCount;          // ProcessCtrlGateway.cpp 註解確認此欄位語意
+    vec<ImageBufInfo> bufInfos;
+};
+
+/* [確認] CacaoCaps 巢狀子結構之一。反編譯
+ * writeEmbeddedToParcel(SupportedInfo const&, ...) 確認兩個 hidl_vec 欄位。
+ * VideoHFRCaps 的 writeEmbeddedToParcel 是完全相同的函式位址，
+ * 應是對同一結構的 typedef。 */
+struct SupportedInfo {
+    uint32_t[2] reserved0;
+    vec<ImageSize> sizes;
+    vec<uint32_t>  formats;
+};
+
+typedef SupportedInfo VideoHFRCaps;
+
+/* [確認] CacaoCaps 巢狀子結構之二。反編譯
+ * writeEmbeddedToParcel(SuperSlowCaps const&, ...) 確認三個 hidl_vec 到
+ * +0x40 為止；尾端 4 個保留字（+0x40~+0x4c）是從 V3_1::CacaoCaps 的擴充
+ * 欄位絕對 offset (+0xD0) 交叉驗證確認的（回推 sizeof(V3_0::CacaoCaps)
+ * =0xD0），不是估算。 */
+struct SuperSlowCaps {
+    uint32_t[4] reserved0;
+    vec<ImageSize> sizes;
+    vec<uint32_t>  formats0;
+    vec<uint32_t>  formats1;
+    uint32_t[4] reserved1;
+};
+
+/* [確認] CacaoCaps 巢狀子結構之三。反編譯
+ * writeEmbeddedToParcel(VideoStabilizationCaps const&, ...) 確認四個
+ * hidl_vec 欄位；總大小 0x60 (96 bytes) 是從 CacaoCaps 內嵌它之後緊接著
+ * 下一個欄位（sizes @+0x60）反推確認的，不是猜測。 */
+struct VideoStabilizationCaps {
+    uint32_t[4] reserved0;
+    vec<ImageSize> sizes0;
+    vec<uint32_t>  formats0;
+    uint32_t[2] reserved1;
+    vec<ImageSize> sizes1;
+    vec<uint32_t>  formats1;
+    uint32_t[2] reserved2;
+};
+
+/* [確認] getCaps() 回傳的相機能力結構。反編譯
+ * writeEmbeddedToParcel(CacaoCaps const&, ...) 完全推翻先前「一堆
+ * sizes0..formats3 扁平陣列」的猜測：CacaoCaps 其實是巢狀具名子結構——
+ * 開頭直接內嵌 VideoStabilizationCaps（reinterpret_cast this 呼叫，
+ * 代表它是 CacaoCaps 的第一個成員），接著兩個 hidl_vec，最後內嵌
+ * SuperSlowCaps。sizeof=0xD0 (208 bytes) 是編譯器實際採用的值，
+ * 用 V3_1::CacaoCaps 的擴充欄位絕對 offset 交叉驗證確認過。 */
+struct CacaoCaps {
+    VideoStabilizationCaps videoStabilization;
+    vec<ImageSize> sizes;
+    vec<uint32_t>  formats;
+    SuperSlowCaps superSlow;
+};

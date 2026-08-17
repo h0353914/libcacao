@@ -1,0 +1,31 @@
+/*
+ * vendor.somc.hardware.camera.cacao@3.0::ICacaoCallback
+ *
+ * 反推自 vendor.somc.hardware.camera.cacao@3.0.so。用 Ghidra headless
+ * 反編譯 BnHwCacaoCallback::onTransact 直接確認 transaction code
+ * （2026-08-17，取代先前反了的猜測）：
+ *
+ *   code 1  handleEvent
+ *   code 2  handleProgress
+ *   code 3  handleResult
+ *
+ * 訊息碼參考（從 ProcessCtrlGateway.cpp 既有反編譯確認）：
+ *   handleEvent    對應 PAL_MSG_SUPER_SLOW 0x01000009
+ *   handleProgress 對應 PAL_MSG_PROGRESS  0x01000007
+ *   handleResult   對應 PAL_MSG_RESULT    0x01000008
+ *
+ * 三個方法都不是 oneway：BnHwCacaoCallback::onTransact 對每個 case 都有
+ * `if ((flags & 1) != 0) goto error` 這種檢查——這是 HIDL codegen 對
+ * 「非 oneway 方法卻帶 oneway flag 呼叫」的標準拒絕邏輯，代表呼叫端必須
+ * 不帶 oneway flag，也就是同步呼叫。
+ */
+
+package vendor.somc.hardware.camera.cacao@3.0;
+
+interface ICacaoCallback {
+    handleEvent(Event ev);
+
+    handleProgress(Result res);
+
+    handleResult(Result res);
+};
