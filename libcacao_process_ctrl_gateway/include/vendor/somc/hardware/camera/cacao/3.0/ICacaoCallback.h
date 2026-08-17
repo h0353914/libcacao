@@ -15,12 +15,11 @@ namespace camera {
 namespace cacao {
 namespace V3_0 {
 
-/* ICacaoCallback vtable（from BnHwCacaoCallback 分發邏輯，disasm @3.0.so）:
- * IBase 佔 slot 0~12（13 個：2 dtors + 10 HIDL 方法 + 1 isRemote）
- * 自訂方法（對照 _hidl_handleX 呼叫的 [r0,#offset]）：
- *   slot 13 (0x34) = handleEvent    → _hidl_handleEvent   (transaction 3)
- *   slot 14 (0x38) = handleProgress → _hidl_handleProgress (transaction 2)
- *   slot 15 (0x3c) = handleResult   → _hidl_handleResult  (transaction 1)
+/* ICacaoCallback（2026-08-17 用 Ghidra headless 反編譯 BnHwCacaoCallback::onTransact
+ * 直接確認的 transaction code，取代先前反了的猜測）：
+ *   code 1 = handleEvent    → _hidl_handleEvent
+ *   code 2 = handleProgress → _hidl_handleProgress
+ *   code 3 = handleResult   → _hidl_handleResult
  *
  * 訊息碼：
  *   handleEvent   = PAL_MSG_SUPER_SLOW 0x01000009

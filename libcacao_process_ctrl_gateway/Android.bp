@@ -29,6 +29,7 @@ cc_library_shared {
         "android.hidl.base@1.0",
         "android.hidl.manager@1.0",
         "android.hardware.camera.common@1.0",
+        "android.hardware.camera.provider@2.4",
         "android.hardware.graphics.allocator@2.0",
         "libhidlbase",
         "libandroid",

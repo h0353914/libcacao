@@ -269,11 +269,11 @@ int CacaoService::getCaps(const cacao::ProcessCtrlCaps::CameraIndex& camIdx,
     int ret = 0;
     cacao::Caps caps;
 
-    V3_0::CameraId camId;
+    V3_0::CameraIndex camId;
     if (camIdx.index == 0) {
-        camId = V3_0::CameraId::CAMERA_ID_0;
+        camId = V3_0::CameraIndex::CAMERA_ID_0;
     } else if (camIdx.index == 1) {
-        camId = V3_0::CameraId::CAMERA_ID_1;
+        camId = V3_0::CameraIndex::CAMERA_ID_1;
     } else {
         __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
             "getCaps: invalid camIdx %d", camIdx.index);
@@ -310,8 +310,10 @@ int CacaoService::getCaps(const cacao::ProcessCtrlCaps::CameraIndex& camIdx,
             ret = -0x6f;
         }
     } else {
-        // V3.1 路徑：呼叫 mServiceV31->getCaps
-        auto hidlRet = mServiceV31->getCaps(
+        // V3.1 路徑：呼叫 mServiceV31->getCapsV3_1
+        // （dynsym/Ghidra 確認 V3.1 並未覆寫 getCaps，只新增 getCapsV3_1；
+        //   先前誤用 getCaps 這個名字，型別能兜起來只是巧合）
+        auto hidlRet = mServiceV31->getCapsV3_1(
             camId,
             [&](const V3_1::CacaoCaps& hidlCaps, V3_0::ErrCode errCode) {
                 if (errCode != V3_0::ErrCode::OK) {
