@@ -1,5 +1,10 @@
 // ICacao.h — vendor.somc.hardware.camera.cacao@3.1 主介面 stub
 // V3.1 繼承 V3.0，從 onInit 中的 castFrom 呼叫推斷
+//
+// 2026-08-17 用 Ghidra headless（8092, so_32/vendor.somc.hardware.camera.cacao@3.1.so）
+// 反編譯 V3_1::BnHwCacao::onTransact 確認：code 1-10 直接呼叫 V3_0::BnHwCacao 的
+// _hidl_* helper（等同沿用 V3.0 全部 10 個方法，順序不變），V3.1 只在 code 11
+// 新增唯一一個方法 getCapsV3_1。先前猜測「多一個 padding 方法」是錯的。
 
 #pragma once
 #include <vendor/somc/hardware/camera/cacao/3.0/ICacao.h>
@@ -33,11 +38,9 @@ public:
     /* V3.1 castFrom（stub，實際由 vendor.somc.hardware.camera.cacao@3.1.so 實作） */
     static sp<ICacao> castFrom(const sp<V3_0::ICacao>& service, bool pure = false);
 
-    /* V3.1 新增方法 vtable[0x58]: 未知，占 slot */
-    virtual Return<V3_0::ErrCode> _pad_v31_method() = 0;
-
-    /* V3.1 getCaps vtable[0x5c]: 回傳 V3.1 CacaoCaps */
-    virtual Return<void> getCaps(V3_0::CameraId camId,
+    /* code 11 — V3.1 唯一新增方法，回傳 V3.1 CacaoCaps（Ghidra 確認方法名為
+     * getCapsV3_1，不是覆寫 V3.0 的 getCaps） */
+    virtual Return<void> getCapsV3_1(V3_0::CameraIndex camIdx,
         std::function<void(const CacaoCaps&, V3_0::ErrCode)> cb) = 0;
 };
 

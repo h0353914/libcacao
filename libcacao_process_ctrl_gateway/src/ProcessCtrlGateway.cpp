@@ -673,9 +673,10 @@ int ProcessCtrlGateway::onStart(const ProcessModeBase* mode) {
         *reinterpret_cast<void**>(
             reinterpret_cast<uint8_t*>(this) + 0x2f4));
 
-    /* 準備 ModeData — REF 用 NEON vld1/vst1 批量複製 mode+0x0c..+0x2b */
+    /* 準備 ControlMode（dynsym 確認真實型別名，先前誤植為 ModeData）
+     * — REF 用 NEON vld1/vst1 批量複製 mode+0x0c..+0x2b */
     const uint32_t* modeRaw = reinterpret_cast<const uint32_t*>(mode);
-    V30::ModeData md;
+    V30::ControlMode md;
     md.modeType = mode->getType();
     __aeabi_memcpy8(&md.camIdx, reinterpret_cast<const uint8_t*>(mode) + 0x0c, 32);
 
@@ -1124,15 +1125,21 @@ void ProcessCtrlGateway::onHandleSuperSlowDoneInternal() {
 }
 
 /* setConfig — 對應 Ghidra Gateway_setConfig_1_000197e8
- * 讀取 configId，映射 dpType，直接呼叫 mService->configure
- * 參考版本傳遞 2 字 {mBuffer=NULL, mSize=dpType} 給 configure() */
+ * 讀取 configId，映射 dpType，直接呼叫 mService->setConfig
+ *
+ * 2026-08-17 更正：Ghidra 反編譯 BpHwCacao::_hidl_setConfig 確認
+ * writeBuffer(parcel, &config, 8, …) 只送出 8 bytes，Config 本身就是
+ * {configId, value} 兩個 uint32_t（見 types.h）。先前把這兩個 word
+ * reinterpret_cast 成 hidl_vec<uint8_t>{mBuffer,mSize} 只是巧合地位元組
+ * 相容（都是 8 bytes、都是兩個 word），語意上是錯的；vtable slot
+ * 對應的真實方法名也是 setConfig，不是 configure。 */
 int ProcessCtrlGateway::setConfig(const ProcessConfigBase* cfg) {
     int configId = reinterpret_cast<int(*const*)(const void*)>(
         *reinterpret_cast<void*const*>(cfg))[0x10/4](cfg);
     uint32_t err = 0;
 
     if (configId == 0x65) {
-        /* 2-word hidl_vec: {mBuffer=NULL, mSize=dpType} — 與參考完全一致 */
+        /* {configId=0, value=dpType} — 與參考完全一致 */
         uint32_t vec[2];
         vec[0] = 0;
         vec[1] = 0;
@@ -1158,8 +1165,8 @@ do_configure:
         auto svc = reinterpret_cast<V30::ICacao*>(
             *reinterpret_cast<void**>(
                 reinterpret_cast<uint8_t*>(this) + 0x2f4));
-        auto ret = svc->configure(
-            *reinterpret_cast<const android::hardware::hidl_vec<uint8_t>*>(vec));
+        auto ret = svc->setConfig(
+            *reinterpret_cast<const V30::Config*>(vec));
         uint32_t result = 0xffffff91u;
         if (hidlErrCode(ret) == 0) {
             result = err;
@@ -1178,11 +1185,14 @@ int ProcessCtrlGateway::getConfig(ProcessConfigBase* cfg) {
     if (configId == 0x65) {
         int errCode = 0;
         int dpType = 0;
-        android::hardware::hidl_vec<uint8_t> cfgIn;
-        auto ret = mService->getConfig(cfgIn,
+        /* 先前誤傳 hidl_vec<uint8_t>；Ghidra 反編譯 BpHwCacao::_hidl_getConfig
+         * 確認第一個參數是 writeUint32 的純量 ConfigId，且 Config 只有 8
+         * bytes（configId, value 各一個 uint32_t）——對應 setConfig 那邊
+         * {configId=0, value=dpType} 的用法，這裡回讀時是 value 欄位。 */
+        auto ret = mService->getConfig(static_cast<V30::ConfigId>(configId),
             [&errCode, &dpType](const V30::Config& config, V30::ErrCode ec) {
                 if ((int)ec == 0) {
-                    dpType = (int)config.configId;
+                    dpType = (int)config.value;
                 } else {
                     PAL_LogPrint(__FILE__, __LINE__, 0x100, 1, "hidl cacao interface getConfig error");
                     errCode = (int)0xffffff91u;
@@ -1691,7 +1701,11 @@ void ProcessCtrlGateway::handleVideoCapture(ResultItem* param_1) {
                         auto svc = reinterpret_cast<V30::ICacao*>(
                             *reinterpret_cast<void**>(
                                 reinterpret_cast<uint8_t*>(this) + 0x2f4));
-                        svc->returnBuffer(hdl, THIS_U32(0x628));
+                        /* 先前誤植為 returnBuffer；Ghidra 反編譯
+                         * BnHwCacao::onTransact 確認這個 vtable slot（code 8）
+                         * 實際是 setColorSpaceForHandle(hidl_handle, DataSpace)。 */
+                        svc->setColorSpaceForHandle(
+                            hdl, static_cast<V30::DataSpace>(THIS_U32(0x628)));
                     }
 
                     int* ro = reinterpret_cast<int*>(RI_PTR(newItem, 0xd0));

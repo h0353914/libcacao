@@ -1,6 +1,13 @@
 // types.h — vendor.somc.hardware.camera.cacao@3.0 型別 stub
 // 依照 libcacao_process_ctrl_gateway.so 反編譯結果重建
 // 實際 HIDL 傳輸由 vendor.somc.hardware.camera.cacao@3.0.so 提供
+//
+// 2026-08-17 用 Ghidra headless（8091, so_32/vendor.somc.hardware.camera.cacao@3.0.so）
+// 反編譯 BnHwCacao::onTransact 與 dynsym 校正：
+//   - enum 真實名稱是 CameraIndex（非 CameraId）、ControlMode（非 ModeData）
+//   - CacaoCaps 實際內嵌 JpegSetting/VideoHFRCaps/SuperSlowCaps/SupportedInfo/
+//     VideoStabilizationCaps（見 writeEmbeddedToParcel 的 overload 簽章），
+//     欄位精確 layout 仍待進一步反編譯，這裡先保留舊的扁平猜測 + TODO
 
 #pragma once
 #include <stdint.h>
@@ -20,10 +27,21 @@ enum class ErrCode : int32_t {
     ERR_GENERAL  = -1,
 };
 
-/* CameraId 列舉（getCaps 參數） */
-enum class CameraId : int32_t {
+/* CameraIndex 列舉（getCaps 參數；dynsym 確認真實名稱為 CameraIndex） */
+enum class CameraIndex : int32_t {
     CAMERA_ID_0 = 0,
     CAMERA_ID_1 = 1,
+};
+
+/* ConfigId 列舉（getConfig 參數；dynsym 確認存在，實際值未反查） */
+enum class ConfigId : int32_t {
+    UNKNOWN = 0,
+};
+
+/* DataSpace（setColorSpaceForHandle 參數；dynsym 確認存在，實際值未反查，
+ * 很可能對應 android::hardware::graphics::common 的 Dataspace，待驗證） */
+enum class DataSpace : int32_t {
+    UNKNOWN = 0,
 };
 
 /* ImageSize — hidl_vec<ImageSize> 在 CacaoCaps 中使用 */
@@ -76,10 +94,30 @@ enum class ProcessType : uint32_t {
     TRIGGER_SUPER = 13,
 };
 
-/* Config 結構（setConfig 參數，大小從反編譯估算） */
+/* Config 結構 — 2026-08-17 用 Ghidra 反編譯 BpHwCacao::_hidl_setConfig
+ * （writeBuffer(parcel, &config, 8, …)）與 _hidl_getConfig
+ * （readBuffer(parcel, 8, …)）確認：整個結構固定 8 bytes，兩個 uint32_t，
+ * 不是先前猜測的 0x104-byte「configId + 256-byte data」。
+ * 對照 ProcessCtrlGateway::setConfig 送出的 {mBuffer=0, mSize=dpType} 二字，
+ * 第二個欄位就是 dpType 本身，非指標。 */
 struct Config {
     uint32_t configId;
-    uint8_t  data[0x100];
+    uint32_t value;
+};
+
+/* ControlMode — start() HIDL 方法的參數結構（dynsym 確認真實名稱為
+ * ControlMode，非先前猜測的 ModeData）。9 個 uint32_t（36 bytes），
+ * 從 onStart 反組譯確認，對應 ProcessCtrlMode 的 field_08..field_28 */
+struct ControlMode {
+    uint32_t modeType;          // mode->getType()
+    int32_t  camIdx;            // field_0c
+    uint32_t maxStreamWidth;    // field_10
+    uint32_t maxStreamHeight;   // field_14
+    uint32_t captureWidth;      // field_18
+    uint32_t captureHeight;     // field_1c
+    uint32_t maxPrdCaptureNum;  // field_20
+    uint32_t field_24;          // field_24
+    uint32_t field_28;          // field_28
 };
 
 /* ImageBufInfo（從 REF copyProcessCtrlParam 彙編確認佈局）
@@ -107,22 +145,6 @@ struct Result {
 struct Event {
     uint32_t eventType;
     uint32_t reserved[3];
-};
-
-/* ModeData — start() HIDL 方法的參數結構
- * 9 個 uint32_t（36 bytes），從 onStart 反組譯確認
- * 對應 ProcessCtrlMode 的 field_08..field_28
- */
-struct ModeData {
-    uint32_t modeType;          // mode->getType()
-    int32_t  camIdx;            // field_0c
-    uint32_t maxStreamWidth;    // field_10
-    uint32_t maxStreamHeight;   // field_14
-    uint32_t captureWidth;      // field_18
-    uint32_t captureHeight;     // field_1c
-    uint32_t maxPrdCaptureNum;  // field_20
-    uint32_t field_24;          // field_24
-    uint32_t field_28;          // field_28
 };
 
 /* Param — copyProcessCtrlParam 目標結構
