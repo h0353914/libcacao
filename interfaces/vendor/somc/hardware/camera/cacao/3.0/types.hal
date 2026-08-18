@@ -89,10 +89,16 @@ struct Result {
     uint8_t[72] data;
 };
 
-/* [確認] ICacaoCallback::handleEvent 的資料結構，大小約 16 bytes。 */
+/* [確認] ICacaoCallback::handleEvent 的資料結構，sizeof = 4。
+ *
+ * 2026-08-18 修正：先前寫成 16 bytes（註解也自承是「大小約」的估算），
+ * 導致 cald 端呼叫 handleEvent 時 parceling 失敗（BAD_VALUE），
+ * 而 cacao@3.0-impl 的 Cacao::onHandleEvent 沒檢查 HIDL 回傳狀態，
+ * libhidlbase 的 return_status 解構子就直接 abort 掉 provider 服務。
+ * 直接證據：原廠 blob 的 BpHwCacaoCallback::_hidl_handleEvent 裡
+ * writeBuffer 的長度立即數是 4（transaction code 1）。 */
 struct Event {
     uint32_t eventType;
-    uint32_t[3] reserved;
 };
 
 /* [確認] process()/processAsync() 的參數結構。反編譯

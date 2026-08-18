@@ -161,16 +161,21 @@ static_assert(sizeof(::vendor::somc::hardware::camera::cacao::V3_0::Result) == 7
 static_assert(__alignof(::vendor::somc::hardware::camera::cacao::V3_0::Result) == 1, "wrong alignment");
 
 /*
- * [確認] ICacaoCallback::handleEvent 的資料結構，大小約 16 bytes。
+ * [確認] ICacaoCallback::handleEvent 的資料結構，sizeof = 4。
+ *
+ * 2026-08-18 修正：先前寫成 16 bytes（註解也自承是「大小約」的估算），
+ * 導致 cald 端呼叫 handleEvent 時 parceling 失敗（BAD_VALUE），
+ * 而 cacao@3.0-impl 的 Cacao::onHandleEvent 沒檢查 HIDL 回傳狀態，
+ * libhidlbase 的 return_status 解構子就直接 abort 掉 provider 服務。
+ * 直接證據：原廠 blob 的 BpHwCacaoCallback::_hidl_handleEvent 裡
+ * writeBuffer 的長度立即數是 4（transaction code 1）。
  */
 struct Event final {
     uint32_t eventType __attribute__ ((aligned(4)));
-    ::android::hardware::hidl_array<uint32_t, 3> reserved __attribute__ ((aligned(4)));
 };
 
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::Event, eventType) == 0, "wrong offset");
-static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::Event, reserved) == 4, "wrong offset");
-static_assert(sizeof(::vendor::somc::hardware::camera::cacao::V3_0::Event) == 16, "wrong size");
+static_assert(sizeof(::vendor::somc::hardware::camera::cacao::V3_0::Event) == 4, "wrong size");
 static_assert(__alignof(::vendor::somc::hardware::camera::cacao::V3_0::Event) == 4, "wrong alignment");
 
 /*
@@ -831,8 +836,6 @@ static inline std::string toString(const ::vendor::somc::hardware::camera::cacao
     os += "{";
     os += ".eventType = ";
     os += ::android::hardware::toString(o.eventType);
-    os += ", .reserved = ";
-    os += ::android::hardware::toString(o.reserved);
     os += "}"; return os;
 }
 
@@ -842,9 +845,6 @@ static inline void PrintTo(const ::vendor::somc::hardware::camera::cacao::V3_0::
 
 static inline bool operator==(const ::vendor::somc::hardware::camera::cacao::V3_0::Event& lhs, const ::vendor::somc::hardware::camera::cacao::V3_0::Event& rhs) {
     if (lhs.eventType != rhs.eventType) {
-        return false;
-    }
-    if (lhs.reserved != rhs.reserved) {
         return false;
     }
     return true;
