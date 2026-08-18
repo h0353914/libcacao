@@ -23,12 +23,15 @@ hidl_package_root {
 // 繞過方式：改成手動離線跑 hidl-gen 產生一次 C++ 程式碼，把產物直接
 // check-in 進 interfaces/generated/，用一般的 cc_library_shared 編譯——
 // 不再經過 hidl_interface 那個壞掉的 genrule。之後改了 .hal 需要記得手動
-// 重跑（注意：要在 interfaces/ 這一層目錄下執行，-o generated 才會落在
-// interfaces/generated/，跟這個 Android.bp 的 srcs 相對路徑對得上）：
-//   cd interfaces && hidl-gen -Lc++-headers -o generated \
-//     -r vendor.somc.hardware.camera:vendor/somc/hardware/camera \
-//     -r android.hardware:hardware/interfaces \
-//     -r android.hidl:system/libhidl/transport \
+// 重跑（注意 -r 的路徑 hidl-gen 是相對 build top 解析的，不是相對 cwd，
+// 所以這裡一律用絕對路徑；-o 才是相對 cwd，要在 interfaces/ 這層執行，
+// 產物才會落在 interfaces/generated/，跟下面 srcs 的相對路徑對得上）：
+//   I=<這個 interfaces 目錄的絕對路徑>
+//   cd $I && rm -rf generated && \
+//   hidl-gen -Lc++-headers -o generated \
+//     -r vendor.somc.hardware.camera:$I/vendor/somc/hardware/camera \
+//     -r android.hardware:$ANDROID_BUILD_TOP/hardware/interfaces \
+//     -r android.hidl:$ANDROID_BUILD_TOP/system/libhidl/transport \
 //     vendor.somc.hardware.camera.cacao@3.0
 //   （-Lc++-sources 同樣參數再跑一次）
 cc_library_shared {

@@ -235,17 +235,25 @@ typedef ::vendor::somc::hardware::camera::cacao::V3_0::SupportedInfo VideoHFRCap
 
 /*
  * [確認] CacaoCaps 巢狀子結構之二。反編譯
- * writeEmbeddedToParcel(SuperSlowCaps const&, ...) 確認三個 hidl_vec 到
- * +0x40 為止；尾端 4 個保留字（+0x40~+0x4c）是從 V3_1::CacaoCaps 的擴充
- * 欄位絕對 offset (+0xD0) 交叉驗證確認的（回推 sizeof(V3_0::CacaoCaps)
- * =0xD0），不是估算。
+ * readEmbeddedFromParcel(SuperSlowCaps const&, ...) 確認三個 hidl_vec 位於
+ * +0x10 / +0x20 / +0x30（到 +0x40 為止）。
+ *
+ * 2026-08-18 修正：尾端保留字是 2 個（+0x40~+0x44），不是先前寫的 4 個，
+ * 所以 sizeof(SuperSlowCaps)=0x48（不是 0x50）。
+ * 先前之所以寫 4 個，是因為從 V3_1::CacaoCaps 的 ext0 絕對 offset +0xD0
+ * 回推「sizeof(V3_0::CacaoCaps)=0xD0」——但那個推論預設 base 與 ext0 相鄰，
+ * 實際上 V3.1 在兩者之間還有 8 bytes 填充（見 3.1/types.hal）。
+ * 現在改用直接證據：原廠 blob 的 BpHwCacao::_hidl_getCaps 裡
+ * readBuffer 的立即數就是 0xC8，即 sizeof(V3_0::CacaoCaps)=0xC8=200，
+ * 而 superSlow 位於 +0x80 → sizeof(SuperSlowCaps)=0xC8-0x80=0x48。
+ * 這也跟 CacaoService 的攤平函式只取用 reserved1[0]/[1] 兩個純量吻合。
  */
 struct SuperSlowCaps final {
     ::android::hardware::hidl_array<uint32_t, 4> reserved0 __attribute__ ((aligned(4)));
     ::android::hardware::hidl_vec<::vendor::somc::hardware::camera::cacao::V3_0::ImageSize> sizes __attribute__ ((aligned(8)));
     ::android::hardware::hidl_vec<uint32_t> formats0 __attribute__ ((aligned(8)));
     ::android::hardware::hidl_vec<uint32_t> formats1 __attribute__ ((aligned(8)));
-    ::android::hardware::hidl_array<uint32_t, 4> reserved1 __attribute__ ((aligned(4)));
+    ::android::hardware::hidl_array<uint32_t, 2> reserved1 __attribute__ ((aligned(4)));
 };
 
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowCaps, reserved0) == 0, "wrong offset");
@@ -253,7 +261,7 @@ static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowC
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowCaps, formats0) == 32, "wrong offset");
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowCaps, formats1) == 48, "wrong offset");
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowCaps, reserved1) == 64, "wrong offset");
-static_assert(sizeof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowCaps) == 80, "wrong size");
+static_assert(sizeof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowCaps) == 72, "wrong size");
 static_assert(__alignof(::vendor::somc::hardware::camera::cacao::V3_0::SuperSlowCaps) == 8, "wrong alignment");
 
 /*
@@ -302,7 +310,7 @@ static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::CacaoCaps,
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::CacaoCaps, sizes) == 96, "wrong offset");
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::CacaoCaps, formats) == 112, "wrong offset");
 static_assert(offsetof(::vendor::somc::hardware::camera::cacao::V3_0::CacaoCaps, superSlow) == 128, "wrong offset");
-static_assert(sizeof(::vendor::somc::hardware::camera::cacao::V3_0::CacaoCaps) == 208, "wrong size");
+static_assert(sizeof(::vendor::somc::hardware::camera::cacao::V3_0::CacaoCaps) == 200, "wrong size");
 static_assert(__alignof(::vendor::somc::hardware::camera::cacao::V3_0::CacaoCaps) == 8, "wrong alignment");
 
 //

@@ -18,9 +18,15 @@ import @3.0::types;
  * 都是呼叫 V3_0::writeEmbeddedToParcel(SupportedInfo const&, ...)——
  * 也就是說 V3.1 的擴充欄位就是兩個 V3_0::SupportedInfo 實例，不是先前
  * 猜測的 sizes4/formats4/sizes5/formats5 四個獨立 hidl_vec。
- * （HIDL struct 不支援 extends，用組合表示 base 欄位，wire 佈局等價。） */
+ * （HIDL struct 不支援 extends，用組合表示 base 欄位，wire 佈局等價。）
+ *
+ * 2026-08-18 修正：base（sizeof=0xC8，見 3.0/types.hal）結束於 +0xC8，
+ * 但 ext0 從 +0xD0 開始，中間有 8 bytes 填充，先前漏掉了。
+ * 直接證據：3.1 blob 的 BpHwCacao::_hidl_getCapsV3_1 裡 readBuffer 立即數
+ * 是 0x120=288，而 0xF8(ext1) + 0x28(SupportedInfo) = 0x120 剛好吻合。 */
 struct CacaoCaps {
-    @3.0::CacaoCaps base;
-    @3.0::SupportedInfo ext0;
-    @3.0::SupportedInfo ext1;
-};
+    @3.0::CacaoCaps base;        // +0x00  (0xC8)
+    uint32_t[2] reserved0;       // +0xC8  填充，補到 ext0 的 +0xD0
+    @3.0::SupportedInfo ext0;    // +0xD0  (0x28)
+    @3.0::SupportedInfo ext1;    // +0xF8  (0x28)
+};                               // sizeof = 0x120 (288)

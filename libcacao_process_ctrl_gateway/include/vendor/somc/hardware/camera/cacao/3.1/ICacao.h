@@ -30,15 +30,21 @@ namespace V3_1 {
 using android::sp;
 using android::hardware::Return;
 
-/* V3.1 CacaoCaps — 組合 V3_0::CacaoCaps（sizeof=0xD0），自己在 +0xD0/+0xF8
+/* V3.1 CacaoCaps — 組合 V3_0::CacaoCaps（sizeof=0xC8），自己在 +0xD0/+0xF8
  * 各加一個 V3_0::SupportedInfo（Ghidra get_function_callees 確認呼叫端）。
  * hidl-gen 產生的 V3_0::CacaoCaps 是 final（HIDL struct 本來就不支援真正
- * 的繼承），所以這裡改用組合而非 C++ inheritance，wire layout 相同。 */
+ * 的繼承），所以這裡改用組合而非 C++ inheritance，wire layout 相同。
+ *
+ * 2026-08-18：base 結束於 +0xC8 但 ext0 從 +0xD0 開始，中間 8 bytes 填充
+ * 先前漏掉（誤以為 sizeof(V3_0::CacaoCaps)=0xD0）。直接證據：3.1 blob 的
+ * BpHwCacao::_hidl_getCapsV3_1 readBuffer 立即數 = 0x120 = 288。 */
 struct CacaoCaps {
-    V3_0::CacaoCaps base;                                                // +0x00 (0xd0)
+    V3_0::CacaoCaps base;                                                // +0x00 (0xc8)
+    uint32_t _pad_c8[2];                                                 // +0xc8 填充
     V3_0::SupportedInfo ext0;                                            // +0xd0 (0x28)
     V3_0::SupportedInfo ext1;                                            // +0xf8 (0x28)
 };                                                                        // sizeof = 0x120 (288)
+static_assert(sizeof(CacaoCaps) == 0x120, "V3_1::CacaoCaps 必須是 0x120");
 
 class ICacao : public V3_0::ICacao {
 public:
