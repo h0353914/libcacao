@@ -1,0 +1,68 @@
+// vendor.somc.hardware.camera.* 的 HIDL interface 定義，反推自
+// vendor.somc.hardware.camera.cacao@{1.0,2.0,3.0,3.1}.so 與
+// vendor.somc.hardware.camera.provider@1.0.so（詳見各 .hal 檔案內註解）。
+//
+// 測試階段：只換 cacao@3.0，刻意不動原本 yoshino-common 裡的
+// cc_prebuilt_library_shared 定義（改名成 _vendor_blob，vendor 分區
+// 繼續用），避免影響 vendor 分區真正在跑的 cald 服務。等驗證通過再考慮
+// 正式替換其餘版本。
+
+hidl_package_root {
+    name: "vendor.somc.hardware.camera",
+    path: "vendor/sony/camera/cacao/interfaces/vendor/somc/hardware/camera",
+}
+
+// 2026-08-18：本來想用 hidl_interface 直接從 .hal 生成，但 Soong 幫這個
+// genrule 算 dep file（.d）路徑時，在這種巢狀目錄結構下會算出重複一層
+// 的子路徑（從沒被建出來），導致 hidl-gen 寫 .d 檔失敗——header/source
+// 本身其實有正確生成，純粹是這個輔助檔案的路徑算錯，屬於
+// system/tools/hidl 這個 Soong 外掛本身的邊角案例 bug，不是我們的
+// .hal 或設定有問題（已用完全相同的 hidl-gen 指令手動執行驗證過，
+// exit 0，產出檔案內容正確）。
+//
+// 繞過方式：改成手動離線跑 hidl-gen 產生一次 C++ 程式碼，把產物直接
+// check-in 進 interfaces/generated/，用一般的 cc_library_shared 編譯——
+// 不再經過 hidl_interface 那個壞掉的 genrule。之後改了 .hal 需要記得手動
+// 重跑（注意：要在 interfaces/ 這一層目錄下執行，-o generated 才會落在
+// interfaces/generated/，跟這個 Android.bp 的 srcs 相對路徑對得上）：
+//   cd interfaces && hidl-gen -Lc++-headers -o generated \
+//     -r vendor.somc.hardware.camera:vendor/somc/hardware/camera \
+//     -r android.hardware:hardware/interfaces \
+//     -r android.hidl:system/libhidl/transport \
+//     vendor.somc.hardware.camera.cacao@3.0
+//   （-Lc++-sources 同樣參數再跑一次）
+cc_library_shared {
+    name: "vendor.somc.hardware.camera.cacao@3.0",
+    owner: "sony",
+
+    srcs: [
+        "generated/vendor/somc/hardware/camera/cacao/3.0/types.cpp",
+        "generated/vendor/somc/hardware/camera/cacao/3.0/CacaoAll.cpp",
+        "generated/vendor/somc/hardware/camera/cacao/3.0/CacaoCallbackAll.cpp",
+    ],
+
+    export_include_dirs: ["generated"],
+
+    shared_libs: [
+        "android.hidl.base@1.0",
+        "android.hidl.manager@1.0",
+        "libhidlbase",
+        "libhidltransport",
+        "libhwbinder",
+        "liblog",
+        "libutils",
+        "libcutils",
+    ],
+
+    export_shared_lib_headers: [
+        "android.hidl.base@1.0",
+        "libhidlbase",
+    ],
+
+    cflags: [
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+    ],
+
+    compile_multilib: "32",
+}

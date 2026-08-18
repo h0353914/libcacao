@@ -25,7 +25,6 @@
     _ZN5cacao18ProcessCtrlGateway29onHandleSuperSlowDoneInternalEv;
     _ZN5cacao18ProcessCtrlGateway6onInitEv;
     _ZN5cacao18ProcessCtrlGateway6onStopEb;
-    _ZN5cacao18ProcessCtrlGateway7convertEN6vendor4somc8hardware6camera5cacao4V3_011ProcessTypeE;
     _ZN5cacao18ProcessCtrlGateway7convertENS_11ProcessTypeE;
     _ZN5cacao18ProcessCtrlGateway7onStartEPKNS_15ProcessModeBaseE;
     _ZN5cacao18ProcessCtrlGateway8onDeinitEv;

@@ -30,9 +30,12 @@ namespace V3_1 {
 using android::sp;
 using android::hardware::Return;
 
-/* V3.1 CacaoCaps — 繼承 V3_0::CacaoCaps（sizeof=0xD0），自己在 +0xD0/+0xF8
- * 各加一個 V3_0::SupportedInfo（Ghidra get_function_callees 確認呼叫端）。 */
-struct CacaoCaps : public V3_0::CacaoCaps {
+/* V3.1 CacaoCaps — 組合 V3_0::CacaoCaps（sizeof=0xD0），自己在 +0xD0/+0xF8
+ * 各加一個 V3_0::SupportedInfo（Ghidra get_function_callees 確認呼叫端）。
+ * hidl-gen 產生的 V3_0::CacaoCaps 是 final（HIDL struct 本來就不支援真正
+ * 的繼承），所以這裡改用組合而非 C++ inheritance，wire layout 相同。 */
+struct CacaoCaps {
+    V3_0::CacaoCaps base;                                                // +0x00 (0xd0)
     V3_0::SupportedInfo ext0;                                            // +0xd0 (0x28)
     V3_0::SupportedInfo ext1;                                            // +0xf8 (0x28)
 };                                                                        // sizeof = 0x120 (288)

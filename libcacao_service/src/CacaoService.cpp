@@ -227,7 +227,7 @@ static bool flattenCacaoCapsV30(uint8_t* data,
         return false;
 
     // Section 1（VideoStabilizationCaps）
-    putU32(data, 0x0000, vsc._reserved0[0]);
+    putU32(data, 0x0000, vsc.reserved0[0]);
     putU32(data, 0x0004, vsc.sizes0.size());
     flattenSizes(data, 0x0008, vsc.sizes0, 128);
     flattenU32  (data, 0x0408, vsc.formats0, 128);
@@ -241,7 +241,7 @@ static bool flattenCacaoCapsV30(uint8_t* data,
     flattenU32  (data, 0x1010, c.formats, 128);
 
     // Section 3（SuperSlowCaps）
-    putU32(data, 0x1210, ssc._reserved0[0]);
+    putU32(data, 0x1210, ssc.reserved0[0]);
     putU32(data, 0x1214, ssc.sizes.size());
     flattenSizes(data, 0x1218, ssc.sizes, 128);
     flattenU32  (data, 0x1618, ssc.formats0, 128);
@@ -249,8 +249,8 @@ static bool flattenCacaoCapsV30(uint8_t* data,
 
     // Section 4a — 對應舊版 field_c0/field_c4，就是促成 SuperSlowCaps 尾端
     // 補上 _reserved1[2] 的那兩個純量（見 types.h 的 SuperSlowCaps 註解）
-    putU32(data, 0x1A18, ssc._reserved1[0]);
-    putU32(data, 0x1A1C, ssc._reserved1[1]);
+    putU32(data, 0x1A18, ssc.reserved1[0]);
+    putU32(data, 0x1A1C, ssc.reserved1[1]);
 
     // Section 4b 全零（V3.0 無 sizes4/5）
     return true;
@@ -259,7 +259,7 @@ static bool flattenCacaoCapsV30(uint8_t* data,
 static bool flattenCacaoCapsV31(uint8_t* data,
                                 const V3_1::CacaoCaps& c) {
     // 先展平 V3.0 部分
-    if (!flattenCacaoCapsV30(data, c))
+    if (!flattenCacaoCapsV30(data, c.base))
         return false;
 
     // Section 4b — V3.1 擴充：ext0/ext1 都是 V3_0::SupportedInfo（Ghidra
@@ -270,7 +270,7 @@ static bool flattenCacaoCapsV31(uint8_t* data,
         c.ext1.sizes.size() > 128 || c.ext1.formats.size() > 128)
         return false;
 
-    putU32(data, 0x1A20, c.ext0._reserved0[0]);
+    putU32(data, 0x1A20, c.ext0.reserved0[0]);
     putU32(data, 0x1A24, c.ext0.sizes.size());
     flattenSizes(data, 0x1A28, c.ext0.sizes, 128);
     flattenU32  (data, 0x1E28, c.ext0.formats, 128);

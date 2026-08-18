@@ -178,7 +178,6 @@ private:
     static bool matchResult(ResultItem* item, void* data);       // 對應 REF matchResult
     static bool matchOldFrameId(ResultItem* item, void* data);   // 對應 REF matchOldFrameId
     uint32_t convert(ProcessType pt);
-    uint32_t convert(V30::ProcessType pt);
     void  getService();
     int   setConfig_v30(const ProcessConfigBase* cfg);
     int   getConfig_v30(ProcessConfigBase* cfg) const;

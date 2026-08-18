@@ -913,7 +913,7 @@ void ProcessCtrlGateway::onHandleProgressInternal(ResultMsg* msg) {
     int* result = reinterpret_cast<int*>(RI_PTR(item, 0xd0));
     /* REF 在 progress 路徑中 inline 填充 result[5..10]、尾部位元組、
      * 及 setProgress/setResult vtable 呼叫，不使用 fillProcessResult helper */
-    uint32_t cvt = convert(static_cast<V30::ProcessType>((V30::ProcessType)RI_U32(item, 0xf0)));
+    uint32_t cvt = convert(static_cast<ProcessType>(RI_U32(item, 0xf0)));
     result[5] = (int)cvt;
     result[6] = RI_I32(item, 0xf4);
     result[7] = RI_I32(item, 0xf8);
@@ -965,7 +965,7 @@ void ProcessCtrlGateway::onHandleResultInternal(ResultMsg* msg) {
     const char* logFile; int logLine; const char* logMsg; int logArg = 0;
 
     if (req) {
-        uint32_t cvt = convert(static_cast<V30::ProcessType>((V30::ProcessType)RI_U32(item, 0xf0)));
+        uint32_t cvt = convert(static_cast<ProcessType>(RI_U32(item, 0xf0)));
         fillProcessResult(result, item, cvt);
         notifyResult(req, *reinterpret_cast<PAL_Err_t*>(msg->resultData + 8));
         goto done_result;
@@ -975,7 +975,7 @@ void ProcessCtrlGateway::onHandleResultInternal(ResultMsg* msg) {
         goto log_err;
     }
     {
-        uint32_t cvt = convert(static_cast<V30::ProcessType>((V30::ProcessType)RI_U32(item, 0xf0)));
+        uint32_t cvt = convert(static_cast<ProcessType>(RI_U32(item, 0xf0)));
         fillProcessResult(result, item, cvt);
 
         switch (result[5]) {
@@ -2617,16 +2617,6 @@ log_err:
  * ──────────────────────────────────────────────── */
 
 uint32_t ProcessCtrlGateway::convert(ProcessType pt) {
-    uint32_t v = static_cast<uint32_t>(pt);
-    if (v < 10) {
-        return v;
-    }
-    PAL_LogPrint(__FILE__, __LINE__, 0x100, 1,
-                 "invalid process type");
-    return 0;
-}
-
-uint32_t ProcessCtrlGateway::convert(V30::ProcessType pt) {
     uint32_t v = static_cast<uint32_t>(pt);
     if (v < 10) {
         return v;
