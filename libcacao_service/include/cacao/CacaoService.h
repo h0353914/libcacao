@@ -193,6 +193,13 @@ public:
 
         void serviceDied();
 
+        // getClient — 對應原廠 Client::getClient() const（Ghidra 0x1aed2，
+        // 實作就是回傳 this+0x28 的 mClient）。registerClient/unregisterClient
+        // 都是先呼叫它、再對回傳值取 asBinder，用 App 端的 ICacaoClient binder
+        // 當作 linkToDeath 與比對的基準。原廠把它放在 vtable 裡（虛擬），
+        // 這裡因為所有呼叫點都在本函式庫內，用直接存取器即可，行為等價。
+        sp<ICacaoClient> getClient() const { return mClient; }
+
     private:
         // ICBProcessResultListener — 這些被 Request 和 gateway 呼叫
         virtual void onHandleProgress(const ::cacao::ProcessResultBase* result) override;

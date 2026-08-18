@@ -218,6 +218,7 @@ static bool flattenCacaoCapsV30(uint8_t* data,
     const auto& vsc = c.videoStabilization;
     const auto& ssc = c.superSlow;
 
+
     // 先驗證所有 vec size ≤ 128
     if (vsc.sizes0.size() > 128 || vsc.formats0.size() > 128 ||
         vsc.sizes1.size() > 128 || vsc.formats1.size() > 128 ||
@@ -439,7 +440,17 @@ void CacaoService::registerClient(const sp<Client>& client) {
     pthread_mutex_lock(&mClientLock);
     if (client != NULL) {
         mClients.push_back(client);
-        IInterface::asBinder(client)->linkToDeath(this);
+        // 2026-08-19 修正：原本掛在 IInterface::asBinder(client)——那是 Client
+        // 自己的本地 BBinder，對本地 binder 掛 linkToDeath 永遠不會觸發（死亡
+        // 通知只對遠端 proxy 有意義）。結果 App 非正常結束（force-stop／崩潰）
+        // 時沒有任何人回收這個 Client，它的 gateway 也就永遠不解構，
+        // PAL_Create/PAL_Delete 的引用計數再也回不到 0，cald 端的 session
+        // 永遠不重新初始化 → 下次開相機時 excalibur::System::start() 卡死。
+        // 要掛的是 App 端的 ICacaoClient 遠端 binder。
+        sp<IBinder> remote = IInterface::asBinder(client->getClient());
+        if (remote != NULL) {
+            remote->linkToDeath(this);
+        }
     }
     pthread_mutex_unlock(&mClientLock);
 }
@@ -449,7 +460,8 @@ void CacaoService::unregisterClient(const sp<IBinder>& binder) {
     pthread_mutex_lock(&mClientLock);
     for (List<sp<Client>>::iterator it = mClients.begin();
          it != mClients.end(); ++it) {
-        if (IInterface::asBinder(*it) == binder) {
+        // 比對基準跟 registerClient 的 linkToDeath 一致：App 端的 binder
+        if (IInterface::asBinder((*it)->getClient()) == binder) {
             binder->unlinkToDeath(this);
             it->clear();
             mClients.erase(it);
@@ -623,6 +635,7 @@ void CacaoService::Client::disconnect() {
         // ICacaoGateway D0 dtor — 刪除 gateway
         delete static_cast<cacao::ICacaoGateway*>(mProcess);
         mProcess = NULL;
+    } else {
     }
 
     // 排空 request list
