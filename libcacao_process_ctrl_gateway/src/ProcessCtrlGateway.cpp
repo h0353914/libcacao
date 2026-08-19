@@ -28,28 +28,6 @@ namespace V30 = vendor::somc::hardware::camera::cacao::V3_0;
 namespace V31 = vendor::somc::hardware::camera::cacao::V3_1;
 namespace VProvider = vendor::somc::hardware::camera::provider::V1_0;
 
-/*
- * Device's HIDL getService has signature (std::string const&, bool) but our
- * Android 14 HIDL headers generate (hidl_string const&). Use asm label to
- * reference the device's mangled symbol directly.
- */
-extern android::sp<VProvider::IVendorSomcCameraProvider>
-VendorSomcCameraProvider_getService(const std::string& name, bool getStub)
-    asm("_ZN6vendor4somc8hardware6camera8provider4V1_0"
-        "25IVendorSomcCameraProvider10getServiceE"
-        "RKNSt3__112basic_stringIcNS6_11char_traitsIcEE"
-        "NS6_9allocatorIcEEEEb");
-
-/*
- * Same issue for castFrom: device has (sp<V3_0::ICacao> const&, bool)
- * but our headers generate (sp<V3_0::ICacao> const&).
- * 返回型別必須是 Return<sp<>> 以匹配 HIDL 實際 ABI（28 bytes sret）。
- */
-extern android::hardware::Return<android::sp<V31::ICacao>>
-ICacao_castFrom_compat(const android::sp<V30::ICacao>& parent, bool emitError)
-    asm("_ZN6vendor4somc8hardware6camera5cacao4V3_16ICacao"
-        "8castFromERKN7android2spINS3_4V3_06ICacaoEEEb");
-
 // 便利巨集：存取 this 相對偏移
 #define THIS_U8(off)     (reinterpret_cast<uint8_t*>(this) + (off))
 #define THIS_U32(off)    (*reinterpret_cast<uint32_t*>(THIS_U8(off)))
@@ -579,7 +557,7 @@ ProcessCtrlGateway::~ProcessCtrlGateway() {
 
 int ProcessCtrlGateway::onInit() {
     sp<VProvider::IVendorSomcCameraProvider> provider =
-        VendorSomcCameraProvider_getService(std::string("internal/0"), false);
+        VProvider::IVendorSomcCameraProvider::getService("internal/0", false);
     if (!provider) {
         PAL_LogPrint(__FILE__, __LINE__, 0x100, 1,
                      "Get service failed.");
@@ -612,8 +590,7 @@ int ProcessCtrlGateway::onInit() {
     mService = svc;
 
     // castFrom V3.1：匹配 reference 邏輯
-    // reference: castFrom 返回 Return<sp<V31::ICacao>>（28 bytes sret）
-    auto castRet = ICacao_castFrom_compat(mService, false);
+    auto castRet = V31::ICacao::castFrom(mService, false);
     sp<V31::ICacao> v31 = (sp<V31::ICacao>)castRet;
     if (v31 == nullptr) {
         if (!castRet.isOk()) {

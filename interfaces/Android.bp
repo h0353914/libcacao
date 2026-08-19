@@ -2,10 +2,12 @@
 // vendor.somc.hardware.camera.cacao@{1.0,2.0,3.0,3.1}.so 與
 // vendor.somc.hardware.camera.provider@1.0.so（詳見各 .hal 檔案內註解）。
 //
-// 測試階段：只換 cacao@3.0，刻意不動原本 yoshino-common 裡的
-// cc_prebuilt_library_shared 定義（改名成 _vendor_blob，vendor 分區
-// 繼續用），避免影響 vendor 分區真正在跑的 cald 服務。等驗證通過再考慮
-// 正式替換其餘版本。
+// 2026-08-19：cacao@3.0 驗證通過後，其餘 5 個介面（cacao@1.0/2.0/3.1、
+// device@1.0、provider@1.0）也一併換成 hidl-gen 生成版。yoshino-common
+// 裡原本的 cc_prebuilt_library_shared 全部改名成 <name>_vendor_blob
+// （stem 保留原檔名、vendor: true），只留給 vendor 分區真正在跑的 cald
+// 服務鏈（cacao@3.0-impl、provider@1.0-service）使用；system 分區一律
+// 改用這裡建出來的版本，因此不再需要 libhidlbase_shim。
 
 hidl_package_root {
     name: "vendor.somc.hardware.camera",
@@ -32,17 +34,19 @@ hidl_package_root {
 //     -r vendor.somc.hardware.camera:$I/vendor/somc/hardware/camera \
 //     -r android.hardware:$ANDROID_BUILD_TOP/hardware/interfaces \
 //     -r android.hidl:$ANDROID_BUILD_TOP/system/libhidl/transport \
-//     vendor.somc.hardware.camera.cacao@3.0
+//     <package>
 //   （-Lc++-sources 同樣參數再跑一次）
-cc_library_shared {
-    name: "vendor.somc.hardware.camera.cacao@3.0",
+//   <package> 需逐一跑過下列 6 個：
+//     vendor.somc.hardware.camera.cacao@{1.0,2.0,3.0,3.1}
+//     vendor.somc.hardware.camera.device@1.0
+//     vendor.somc.hardware.camera.provider@1.0
+//   （注意 rm -rf generated 只在跑第一個 package 前做一次）
+// 六個 HIDL 介面庫共用的設定。全部 32-bit only（對應原廠 blob 只有
+// /vendor/lib 的 arm 版），且都只建 system 變體——vendor 分區繼續用
+// yoshino-common 裡改名成 *_vendor_blob 的原廠 prebuilt。
+cc_defaults {
+    name: "somc_camera_hidl_defaults",
     owner: "sony",
-
-    srcs: [
-        "generated/vendor/somc/hardware/camera/cacao/3.0/types.cpp",
-        "generated/vendor/somc/hardware/camera/cacao/3.0/CacaoAll.cpp",
-        "generated/vendor/somc/hardware/camera/cacao/3.0/CacaoCallbackAll.cpp",
-    ],
 
     export_include_dirs: ["generated"],
 
@@ -68,4 +72,97 @@ cc_library_shared {
     ],
 
     compile_multilib: "32",
+}
+
+// [未研究] 空介面。只為了讓 provider@1.0 的 getCacaoInterface_V1_0()
+// 有型別可回傳，libcacao_service 從未實際呼叫。詳見 .hal 內註解。
+cc_library_shared {
+    name: "vendor.somc.hardware.camera.cacao@1.0",
+    defaults: ["somc_camera_hidl_defaults"],
+
+    srcs: [
+        "generated/vendor/somc/hardware/camera/cacao/1.0/CacaoAll.cpp",
+    ],
+}
+
+// [未研究] 空介面，理由同 @1.0。
+cc_library_shared {
+    name: "vendor.somc.hardware.camera.cacao@2.0",
+    defaults: ["somc_camera_hidl_defaults"],
+
+    srcs: [
+        "generated/vendor/somc/hardware/camera/cacao/2.0/CacaoAll.cpp",
+    ],
+}
+
+cc_library_shared {
+    name: "vendor.somc.hardware.camera.cacao@3.0",
+    defaults: ["somc_camera_hidl_defaults"],
+
+    srcs: [
+        "generated/vendor/somc/hardware/camera/cacao/3.0/types.cpp",
+        "generated/vendor/somc/hardware/camera/cacao/3.0/CacaoAll.cpp",
+        "generated/vendor/somc/hardware/camera/cacao/3.0/CacaoCallbackAll.cpp",
+    ],
+}
+
+// 繼承 @3.0::ICacao（code 1-10 沿用），只新增 code 11 getCapsV3_1。
+cc_library_shared {
+    name: "vendor.somc.hardware.camera.cacao@3.1",
+    defaults: ["somc_camera_hidl_defaults"],
+
+    srcs: [
+        "generated/vendor/somc/hardware/camera/cacao/3.1/types.cpp",
+        "generated/vendor/somc/hardware/camera/cacao/3.1/CacaoAll.cpp",
+    ],
+
+    shared_libs: [
+        "vendor.somc.hardware.camera.cacao@3.0",
+    ],
+
+    export_shared_lib_headers: [
+        "vendor.somc.hardware.camera.cacao@3.0",
+    ],
+}
+
+// [未研究] 空介面。只為了讓 provider@1.0 的
+// getCameraExtensionDeviceInterface_V1_0() 有型別可回傳。
+cc_library_shared {
+    name: "vendor.somc.hardware.camera.device@1.0",
+    defaults: ["somc_camera_hidl_defaults"],
+
+    srcs: [
+        "generated/vendor/somc/hardware/camera/device/1.0/CameraExtensionDeviceAll.cpp",
+    ],
+}
+
+// 真的繼承 android.hardware.camera.provider@2.4::ICameraProvider
+// （code 1-6），自己新增 code 7-10。
+cc_library_shared {
+    name: "vendor.somc.hardware.camera.provider@1.0",
+    defaults: ["somc_camera_hidl_defaults"],
+
+    srcs: [
+        "generated/vendor/somc/hardware/camera/provider/1.0/VendorSomcCameraProviderAll.cpp",
+    ],
+
+    shared_libs: [
+        "android.hardware.camera.common@1.0",
+        "android.hardware.camera.device@1.0",
+        "android.hardware.camera.device@3.2",
+        "android.hardware.camera.provider@2.4",
+        "vendor.somc.hardware.camera.cacao@1.0",
+        "vendor.somc.hardware.camera.cacao@2.0",
+        "vendor.somc.hardware.camera.cacao@3.0",
+        "vendor.somc.hardware.camera.device@1.0",
+    ],
+
+    export_shared_lib_headers: [
+        "android.hardware.camera.common@1.0",
+        "android.hardware.camera.provider@2.4",
+        "vendor.somc.hardware.camera.cacao@1.0",
+        "vendor.somc.hardware.camera.cacao@2.0",
+        "vendor.somc.hardware.camera.cacao@3.0",
+        "vendor.somc.hardware.camera.device@1.0",
+    ],
 }

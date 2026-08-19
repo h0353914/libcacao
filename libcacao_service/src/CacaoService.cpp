@@ -30,21 +30,6 @@ namespace V3_1 = ::vendor::somc::hardware::camera::cacao::V3_1;
 namespace provider_V1_0 = ::vendor::somc::hardware::camera::provider::V1_0;
 using ::android::hardware::Return;
 
-// 裝置端 V3_1::ICacao::castFrom 匯出的實際 ABI 是
-// Return<sp<V3_1::ICacao>>（28-byte sret），但 IVendorSomcCameraProvider.h
-// 依 Android 14 HIDL header 生成的宣告回傳型別是 plain sp<ICacao>。
-// C++ mangled name 不包含回傳型別，所以直接呼叫 header 宣告的 castFrom()
-// 仍會連結到同一個裝置端符號，但呼叫端配置的 sret buffer 只有
-// sizeof(sp<>) 大小，裝置端函式卻會寫入完整 28 bytes，造成堆疊溢寫。
-// 這正是先前 getInterfaces() 內 RefBase::decStrong() null deref 崩潰
-// （於 onRegistration 首次呼叫時必現）的根因。修法與
-// ProcessCtrlGateway.cpp 的 ICacao_castFrom_compat 相同：用 asm label
-// 直接指定裝置端 mangled symbol，並用正確的 Return<sp<>> 回傳型別接收。
-extern Return<::android::sp<V3_1::ICacao>>
-CacaoService_ICacao_V31_castFrom_compat(const ::android::sp<V3_0::ICacao>& parent, bool emitError)
-    asm("_ZN6vendor4somc8hardware6camera5cacao4V3_16ICacao"
-        "8castFromERKN7android2spINS3_4V3_06ICacaoEEEb");
-
 // 原始 .so 透過 vtable 偏移直接呼叫 serialize/getSerializedSize，
 // C++ 中需要透過 ISerializable 介面存取。
 // 工廠建立的 concrete 物件（ProcessCtrlResult, ProcessCtrlDynamicParameterConfig）
@@ -491,7 +476,11 @@ void CacaoService::getInterfaces() {
     using provider_V1_0::IVendorSomcCameraProvider;
     using ::android::hardware::camera::common::V1_0::Status;
 
-    sp<IVendorSomcCameraProvider> provider = IVendorSomcCameraProvider::getService();
+    // 服務實例名是 "internal/0"（同函式下方三段錯誤訊息的 rodata 原文，
+    // 以及 ProcessCtrlGateway::getService() 的呼叫都證實）。hidl-gen 生成的
+    // getService() 預設值是 "default"，必須明寫，否則 hwservicemanager 會回
+    // "Cannot find entry ...::IVendorSomcCameraProvider/default"。
+    sp<IVendorSomcCameraProvider> provider = IVendorSomcCameraProvider::getService("internal/0");
     if (provider == NULL) return;
 
     // so_32 @ 0x00019dd4：cookie 在呼叫 linkToDeath 前就先算好遞增值，但只有
@@ -538,7 +527,7 @@ void CacaoService::getInterfaces() {
         mLinkCookie = newCookie;
         mService = newService;
         if (mService != NULL) {
-            auto castRet = CacaoService_ICacao_V31_castFrom_compat(mService, false);
+            auto castRet = V3_1::ICacao::castFrom(mService, false);
             mServiceV31 = static_cast<::android::sp<V3_1::ICacao>>(castRet);
         }
     }
