@@ -432,10 +432,14 @@ void CacaoService::registerClient(const sp<Client>& client) {
         // PAL_Create/PAL_Delete 的引用計數再也回不到 0，cald 端的 session
         // 永遠不重新初始化 → 下次開相機時 excalibur::System::start() 卡死。
         // 要掛的是 App 端的 ICacaoClient 遠端 binder。
-        sp<IBinder> remote = IInterface::asBinder(client->getClient());
-        if (remote != NULL) {
-            remote->linkToDeath(this);
-        }
+        //
+        // 原版（Ghidra registerClient @ 0x1aa80）：取 vtable+0x44 = getClient()，
+        // 對回傳的 App 端 ICacaoClient 做 asBinder，接著直接
+        //   pcVar1 = *(code **)(*local_34 + 0x18);   // IBinder vtable+0x18 = linkToDeath
+        //   (*pcVar1)(local_34, recipient, 0, 0);
+        // 中間沒有任何 null 檢查——原版就假設 getClient() 必為非 null，
+        // 這裡不另外加防護，行為與原版一致。
+        IInterface::asBinder(client->getClient())->linkToDeath(this);
     }
     pthread_mutex_unlock(&mClientLock);
 }
@@ -445,6 +449,12 @@ void CacaoService::unregisterClient(const sp<IBinder>& binder) {
     pthread_mutex_lock(&mClientLock);
     for (List<sp<Client>>::iterator it = mClients.begin();
          it != mClients.end(); ++it) {
+        // 原版（Ghidra unregisterClient @ 0x1ab54）在取 getClient() 之前會先
+        // 檢查 list 裡這個 sp 本身是否為 null（`if (*(int **)this_00 != 0)`），
+        // 為 null 就跳過、繼續走下一個節點。
+        if (*it == NULL) {
+            continue;
+        }
         // 比對基準跟 registerClient 的 linkToDeath 一致：App 端的 binder
         if (IInterface::asBinder((*it)->getClient()) == binder) {
             binder->unlinkToDeath(this);
