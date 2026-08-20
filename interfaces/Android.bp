@@ -42,11 +42,31 @@ hidl_package_root {
 //     vendor.somc.hardware.camera.provider@1.0
 //   （注意 rm -rf generated 只在跑第一個 package 前做一次）
 // 六個 HIDL 介面庫共用的設定。全部 32-bit only（對應原廠 blob 只有
-// /vendor/lib 的 arm 版），且都只建 system 變體——vendor 分區繼續用
-// yoshino-common 裡改名成 *_vendor_blob 的原廠 prebuilt。
+// /vendor/lib 的 arm 版）。
+//
+// 2026-08-21：加上 vendor_available: true，讓 Soong 額外建一份 vendor
+// variant，取代 yoshino-common 裡改名成 *_vendor_blob 的原廠 prebuilt，
+// 讓 cald（provider@1.0-service）、cacao@3.0-impl 這些 vendor 分區的
+// 常駐服務也能直接用這裡重建的版本。
+//
+// 起因：先把 system 變體的 .so 直接手動塞進 /vendor/lib 測試過，
+// cald 立刻進 linker 失敗重啟迴圈——
+//   CANNOT LINK EXECUTABLE ...: library "android.hidl.manager@1.0.so"
+//   not found ... in namespace (default)
+// 原因是 system 變體連結到的是 android.hidl.manager@1.0 的 *system*
+// 版本，Treble 的 vendor linker namespace 看不到它。真正要讓 vendor
+// 分區能用，必須讓 Soong 對這幾個 module 額外生成 vendor variant（別
+// 只是手動搬檔案），這樣 shared_libs 列的 android.hidl.base@1.0 /
+// android.hidl.manager@1.0 / libhidlbase / libhidltransport /
+// libhwbinder 才會各自解析到它們自己的 vendor variant——這幾個全部
+// 確認過本來就是 vendor_available:true（android.hidl.*@1.0 是
+// hidl_interface 生成、libhidlbase/libhidltransport/libhwbinder 在
+// system/libhidl、system/libhwbinder 的 Android.bp 裡明寫
+// vendor_available: true），所以只差我們自己這層沒開。
 cc_defaults {
     name: "somc_camera_hidl_defaults",
     owner: "sony",
+    vendor_available: true,
 
     export_include_dirs: ["generated"],
 
