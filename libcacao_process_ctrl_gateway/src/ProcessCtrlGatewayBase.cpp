@@ -369,33 +369,23 @@ ProcessCtrlGatewayBase::ProcessCtrlGatewayBase()
 }
 
 ProcessCtrlGatewayBase::~ProcessCtrlGatewayBase() {
-    // CacaoService::Client::disconnect() 在 client binderDied（App 被 force-stop
-    // 等異常終止）時會直接 delete 這個物件，並不會先呼叫 deinit()。deinit()
-    // 才會送出 PAL_MSG_STOP/PAL_MSG_DEINIT 通知 cald 這個 session 結束，並
-    // PAL_ThreadClose(mThread) 正確關閉 worker thread；若跳過這步直接
-    // PAL_Delete()，cald 端會誤以為這個 client 的 mode 仍在使用中，導致下一次
-    // App 重新開啟相機時卡在 STATUS_RELEASED（Camera2 preview session 建不起
-    // 來，需要整機重開才會恢復）。
+    // Ghidra @ A9 原廠 D2Ev 0x7f0c，同樣把每個 bl 的 veneer/PLT 解到符號：
+    //   7f20 -> PAL_Delete
+    //   7f28 -> cacao_pal::Mutex::~Mutex
+    //   7f3e / 7f44 -> (內部成員解構)
+    //   7f4c -> ProcessCtrlGatewayBase::RequestList::~RequestList
+    //   7f54 -> cacao_pal::Mutex::~Mutex
+    //   7f5e -> cacao::ObjectBase::~ObjectBase
+    // 沒有 deinit()、也沒有讀 mInitFlag——原版在這一層就是不做這件事。
     //
-    // 實測比較過三種寫法：(1) 完整 deinit()（含 PAL_ThreadClose/pthread_join）
-    // ：連續 3 次測試中，即使 photo 模式遇到 2-3 次背靠背過熱強制關閉，相機
-    // 都能正常重新開啟，僅在較後面的 cycle 偶爾造成 cacaoserver 以
-    // "invalid pthread_t" SIGABRT（backtrace: PAL_ThreadClose→pthread_join；
-    // PAL_ThreadClose 是 libcacao_pal.so 內的 vendor prebuilt 函式，join 時
-    // 機在 binderDied 的 Binder 執行緒與 worker thread 自身關閉時序之間有
-    // race，屬 vendor PAL 函式內部行為，非我們能修改的範圍）；此 crash 會
-    // 讓 cacaoserver 自動重啟（系統會重新拉起 persistent service），不影響
-    // 裝置整體可用性。(2) 只呼叫 stop()（純訊息，不 join）與 (3) stop()+送
-    // PAL_MSG_DEINIT 但省略 join：兩者都不會 crash，但都無法解決
-    // STATUS_RELEASED——通常在僅僅 2 次過熱後就會復發，代表真正釋放 cald
-    // session 需要 worker thread 真的結束（join 到），而不只是收到訊息。
-    // 兩害相權取其輕：(1) 的 crash 是自我修復的（重啟後即恢復），(2)(3) 的
-    // STATUS_RELEASED 卻是要整機重開才能解，故採用完整 deinit()。deinit()
-    // 內部依 mInitFlag 狀態判斷是否需要動作，未 init 或已 deinit 過都是安全
-    // 的 no-op。
-    if (mInitFlag != 0) {
-        deinit();
-    }
+    // deinit() 由衍生類別 ~ProcessCtrlGateway()（見該檔案）在解構最一開始
+    // 呼叫一次；原版的順序就是「先 deinit() 收掉 worker thread，再
+    // PAL_Delete()」，這裡不需要、也不該再呼叫一次——曾經在這裡加過
+    // `if (mInitFlag != 0) { deinit(); }` 防護（理由是擔心 client
+    // binderDied 時直接 delete、deinit() 沒機會跑到），結果變成一次解構
+    // 呼叫兩次 deinit()：第二次 queue 已經不在，PAL_MsgSendRecv 回
+    // InvalidArg，接著對已經 join 過的 handle 再 PAL_ThreadClose，
+    // pthread_join 拿到失效的 pthread_t，SIGABRT。
     PAL_Delete();
 }
 
@@ -452,30 +442,43 @@ int ProcessCtrlGatewayBase::init(short priority) {
 int ProcessCtrlGatewayBase::deinit() {
     stop();
 
-    cacao_pal::AutoLock lock(mStateMutex);
     unsigned int ret = (unsigned int)PAL_ERR_NO_INIT;
+    {
+        cacao_pal::AutoLock lock(mStateMutex);
 
-    if (mInitFlag == 1) {
-        struct {
-            uint32_t    msg_id;
-            uint32_t    r0, r1;
-            PAL_QueId_t dest;
-            uint32_t    r2;
-            uint32_t    size;
-        } msg;
-        msg.r0 = 0; msg.r1 = 0; msg.r2 = 0;
-        msg.msg_id = PAL_MSG_DEINIT;
-        msg.dest   = mQueId;
-        msg.size   = 0x18;
+        if (mInitFlag == 1) {
+            struct {
+                uint32_t    msg_id;
+                uint32_t    r0, r1;
+                PAL_QueId_t dest;
+                uint32_t    r2;
+                uint32_t    size;
+            } msg;
+            msg.r0 = 0; msg.r1 = 0; msg.r2 = 0;
+            msg.msg_id = PAL_MSG_DEINIT;
+            msg.dest   = mQueId;
+            msg.size   = 0x18;
 
-        ret = (unsigned int)PAL_MsgSendRecv(reinterpret_cast<PAL_Msg_t*>(&msg));
-        if ((int)ret < 0) {
-            PAL_LogPrint(__FILE__, __LINE__, 0x100, 1,
-                         "MsgSendRecv error <%s>",
-                         PAL_ErrToString((PAL_Err_t)ret));
+            ret = (unsigned int)PAL_MsgSendRecv(reinterpret_cast<PAL_Msg_t*>(&msg));
+            if ((int)ret < 0) {
+                PAL_LogPrint(__FILE__, __LINE__, 0x100, 1,
+                             "MsgSendRecv error <%s>",
+                             PAL_ErrToString((PAL_Err_t)ret));
+            }
         }
-    }
+    }   // lock 在這裡釋放，跟原版一樣在 PAL_ThreadClose 前就放掉
 
+    // Ghidra @ A9 原廠 0x8094 逐指令核對到底：0x810c AutoLock::~AutoLock()
+    // 先跑，然後 0x8110/0x8112 無條件 PAL_ThreadClose(mThread)，沒有
+    // null 檢查，函式結束前也不寫回 mThread/mQueId/mInitFlag 任何一個
+    // 欄位。原版能這樣寫，是因為 deinit() 在原版架構上保證一輩子只會被
+    // 呼叫一次——唯一呼叫處是 ~ProcessCtrlGateway()，呼叫完物件緊接著就
+    // 解構掉了（grep 全 codebase 只有 ProcessCtrlGateway.cpp 那一行呼叫
+    // 這個 ProcessCtrlGatewayBase::deinit()，其餘 deinit() 呼叫都是別的
+    // class 自己的同名方法）。之前這裡加過 if(mThread!=nullptr) 之類的
+    // 冪等防護，是在 ~ProcessCtrlGatewayBase() 也誤加一次 deinit() 呼叫
+    // 的年代（efa7945/bada170 修的雙重呼叫 SIGABRT）留下的；那個誤加的
+    // 呼叫點已經拿掉，防護對現在的呼叫關係是死碼，跟著拿掉才符合原版。
     PAL_ThreadClose(mThread);
     return (int)ret;
 }

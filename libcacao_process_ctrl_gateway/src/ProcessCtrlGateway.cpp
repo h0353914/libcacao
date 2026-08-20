@@ -536,15 +536,33 @@ ProcessCtrlGateway::ProcessCtrlGateway()
 }
 
 ProcessCtrlGateway::~ProcessCtrlGateway() {
-    ProcessCtrlGatewayBase::deinit();
-    // Ghidra D1Ev @ 0x196d0:
-    //   ldr r0,[r4,#0x57c]   ; r0 = mSurface
-    //   cbz r0,skip
-    //   ldr r1,[r0,#0x1c]   ; r1 = *(mSurface+0x1c) = android_native_base_t::decRef
-    //   blx r1               ; decRef(r0=mSurface)
+    // Ghidra @ A9 原廠 libcacao_process_ctrl_gateway.so, D1Ev @ 0x96d0（每個
+    // bl 都已解到 veneer -> .plt -> R_ARM_JUMP_SLOT 對應的真正符號）：
+    //   96e4: mov  r0, r4
+    //   96e6: bl   0xf914          ; long-branch veneer -> PLT ->
+    //                              ;   _ZN5cacao22ProcessCtrlGatewayBase6deinitEv
+    //   96ea: ldr  r0,[r4,#0x57c]  ; r0 = mSurface
+    //   96ee: cbz  r0, skip
+    //   96f0: ldr  r1,[r0,#0x1c]   ; r1 = android_native_base_t::decRef
+    //   96f2: blx  r1              ; decRef(r0=mSurface)
     // ANativeWindow 開頭是 android_native_base_t common:
     //   +0x00 magic, +0x04 version, +0x08..0x17 reserved[4]
     //   +0x18 incRef, +0x1c decRef
+    //
+    // 原版解構的第一件事就是呼叫 deinit()，在 decRef(mSurface) 之前。
+    // deinit() 是整個 gateway 唯一會 PAL_ThreadClose() worker thread 的地方
+    // ——沒有它，接下來 ~ProcessCtrlGatewayBase() 的 PAL_Delete() 會發現還有
+    // 活著的 thread 要收，走進
+    //   PAL_Delete -> PAL_ListSearch [取得 PAL 全域 mutex]
+    //     -> PAL_ThreadSystem_KillThreads -> PAL_ThreadClose -> PAL_MsgSend
+    //       -> PAL_ThreadSystem_IsMsgQueAvailable -> PAL_ListSearchFirst
+    //         -> PAL_MutexLock   [同一把、非遞迴] -> 自鎖
+    // 讓 cacaoserver 卡死（pid 不變、不會崩，所有 getCaps()/connect() 從此
+    // 等不到鎖，App 端逾時跳「未知的錯誤」）。實測 A/B：A9 原廠同樣的
+    // force-stop/重啟重疊壓力 10 輪 timed-out=0；拿掉這行 timed-out=11；
+    // 還原後 timed-out=0，crash buffer 0 行。
+    ProcessCtrlGatewayBase::deinit();
+
     if (mSurface) {
         mSurface->common.decRef(&mSurface->common);
     }
