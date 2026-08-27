@@ -1,0 +1,645 @@
+// cammw_util 的 shmem buffer 系列重建。對照 kong 這輪 decompiled.c：
+//   cammw_util_shmem_alloc_buf               @ 0x141fc
+//   cammw_util_shmem_import_buf              @ 0x142b0
+//   cammw_util_shmem_free_buf                @ 0x144c0
+//   cammw_util_shmem_attach_image_buf        @ 0x14698
+//   cammw_util_shmem_detach_image_buf        @ 0x14970
+//   cammw_util_shmem_make_image_buf_from_handle @ 0x14a0c
+//   cammw_util_shmem_alloc_image_buf         @ 0x13244
+//
+// cammw_util_shmem_clean_buf（@0x14e68）沒有轉譯完，這個函式只在
+// gralloc-backed buffer 需要重新 lock/unlock 時才會走到（不是每次
+// alloc/free 都會用到的路徑），先留 TODO，之後裝置測試如果卡在
+// clean_buf 相關路徑再回來補。
+//
+// 這裡用的 cammw_util_image_buffer_t 是 bufmgr.cpp 定義的那個 24-byte
+// 描述子（不是 gralloc_alloc/ashmem_alloc/heap_alloc 用的 104-byte
+// cammw_buf_t——這兩套是分開的，shmem 系列全部操作 24-byte 版）。
+//
+// image_buffer_t 的欄位（從這些函式的存取反推）：
+//   [0] base/mapped_addr, [1] size, [2] fd, [3] fd_metadata/descriptor,
+//   [4] type(0=ashmem 1=gralloc 2=unsupported 3=heap),
+//   [5]byte cleanup_flag=1
+// attach_image_buf 額外用到 [0x10]/[0x18]（跟 image_buffer_t 不同的
+// 更大結構，attach 專用的輸出格式，這裡照原樣用 byte offset 處理）。
+
+#define LOG_TAG "cammw_util"
+
+#include "cammw_priv_handle.h"
+#include "cammw_util_internal.h"
+
+
+#include <cutils/ashmem.h>
+#include <log/log.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include <hardware/gralloc1.h>
+
+extern "C" GRALLOC1_PFN_RELEASE g_release_func;
+extern "C" GRALLOC1_PFN_RETAIN g_retain_func;
+extern "C" GRALLOC1_PFN_UNLOCK g_unlock_func;
+extern "C" GRALLOC1_PFN_LOCK g_lock_func;
+extern "C" GRALLOC1_PFN_DESTROY_DESCRIPTOR g_destroy_descriptor_func;
+// C++ linkage，跟 gralloc_alloc.cpp 那份宣告同理——不能加 extern "C"。
+int cammw_util_gralloc1_del_descriptor_list(int fd, unsigned long long *out_descriptor);
+extern "C" int cammw_util_mmap(int fd, uint32_t size, uint8_t **out_addr);
+extern "C" int cammw_util_munmap(uint8_t *addr, uint32_t size);
+extern "C" int cammw_util_init(void);
+extern "C" int cammw_util_ashmem_alloc(uint32_t, uint32_t, int32_t, uint32_t, uint8_t, void *);
+extern "C" int cammw_util_heap_alloc(uint32_t, uint32_t, int32_t, uint32_t, uint8_t, void *);
+extern "C" int cammw_util_gralloc_alloc(int, uint32_t, uint32_t, int, uint32_t, uint32_t, uint8_t, void *);
+extern "C" int cammw_util_gralloc_make_buf_from_private_handle(const void *, const int *, int, int,
+                                                                int, uint32_t, const void *, uint8_t,
+                                                                void *);
+
+namespace {
+// 惰性初始化用的 gralloc1 device getter（context.cpp 提供，直接沿用
+// 內部惰性初始化，不重複實作）。
+extern "C" int cammw_util_get_gralloc1_dev(gralloc1_device_t **out_device);
+
+gralloc1_device_t *get_device_or_null() {
+  gralloc1_device_t *dev = nullptr;
+  cammw_util_get_gralloc1_dev(&dev);
+  return dev;
+}
+}  // namespace
+
+extern "C" int cammw_util_shmem_alloc_buf(int type, uint32_t param2, int size, void *out) {
+  if (size == 0 || out == nullptr) {
+    return -0x67;
+  }
+  int rc = cammw_util_init();  // 內部自己會做「已初始化就跳過」的判斷
+  if (rc != 0) {
+    return rc;
+  }
+  switch (type) {
+    case 0:
+      return cammw_util_ashmem_alloc(size, 1, 0, 3, 0, out);
+    case 1:
+      return cammw_util_gralloc_alloc(1, param2, size, 1, 0, 3, 0, out);
+    case 2:
+      return -0x6a;
+    case 3:
+      return cammw_util_heap_alloc(size, 1, 0, 3, 0, out);
+    default:
+      return -0x67;
+  }
+}
+
+// param_1: 0=gralloc 匯入(?) / 1=ashmem 匯入 —— 照原版分支，param_1==1
+// 走 gralloc 路徑其實是誤導名，這裡忠實照原本的數值分支，不強行取名。
+extern "C" int cammw_util_shmem_import_buf(int type, uint32_t size, int src_fd,
+                                           cammw_util_image_buffer_t *out_buf) {
+  int32_t *out = out_buf != nullptr ? out_buf->w : nullptr;
+  if (out == nullptr) {
+    return -0x67;
+  }
+  int rc = cammw_util_init();
+  if (rc != 0) {
+    return rc;
+  }
+  if (type - 2u < 2) {
+    return -0x6a;
+  }
+
+  if (type == 1) {
+    if (src_fd < 0) {
+      ALOGE("E: %s: Invalid argument, hmem=%d", __FUNCTION__, src_fd);
+      return -0x67;
+    }
+    int fd = dup(src_fd);
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = -1;
+    out[3] = 0;
+    out[4] = 4;
+    reinterpret_cast<uint8_t *>(&out[5])[0] = 1;
+    if (fd < 0) {
+      return -0x67;
+    }
+    uint8_t *mapped = nullptr;
+    if (cammw_util_mmap(fd, size, &mapped) != 0) {
+      close(fd);
+      return -0x67;
+    }
+    out[0] = reinterpret_cast<intptr_t>(mapped);
+    out[1] = static_cast<int32_t>(size);
+    out[2] = fd;
+    out[3] = 0;
+    out[4] = 1;
+    return 0;
+  }
+
+  if (type != 0) {
+    return -0x67;
+  }
+  if (src_fd < 0) {
+    ALOGE("E: %s: Invalid argument, hmem=%d", __FUNCTION__, src_fd);
+    return -0x67;
+  }
+  out[0] = 0;
+  out[1] = 0;
+  out[2] = -1;
+  out[3] = 0;
+  out[4] = 4;
+  reinterpret_cast<uint8_t *>(&out[5])[0] = 1;
+  int fd = dup(src_fd);
+  if (fd < 0) {
+    ALOGE("E: %s: Failed, dup fd=%d", __FUNCTION__, fd);
+    return -0x67;
+  }
+  if (ashmem_set_prot_region(fd, PROT_READ | PROT_WRITE) < 0) {
+    ALOGE("E: %s: Failed ashmem_set_prot_region", __FUNCTION__);
+    close(fd);
+    return -0x69;
+  }
+  const size_t page = getpagesize();
+  const uint32_t region_size = static_cast<uint32_t>((page + size - 1) & ~(page - 1));
+  uint8_t *mapped = nullptr;
+  if (cammw_util_mmap(fd, region_size, &mapped) != 0) {
+    close(fd);
+    return -0x67;
+  }
+  out[0] = reinterpret_cast<intptr_t>(mapped);
+  out[1] = static_cast<int32_t>(region_size);
+  out[2] = fd;
+  out[3] = 0;
+  out[4] = 0;
+  return 0;
+}
+
+extern "C" int cammw_util_shmem_free_buf(cammw_util_image_buffer_t *buf_desc) {
+  int32_t *buf = buf_desc != nullptr ? buf_desc->w : nullptr;
+  if (buf == nullptr) {
+    return -0x67;
+  }
+  int rc = cammw_util_init();
+  if (rc != 0) {
+    return rc;
+  }
+
+  switch (buf[4]) {
+    case 0: {
+      if (buf[0] == 0) {
+        ALOGE("E: %s: Invalid Arg", __FUNCTION__);
+        return -0x67;
+      }
+      cammw_util_munmap(reinterpret_cast<uint8_t *>(static_cast<intptr_t>(buf[0])),
+                        static_cast<uint32_t>(buf[1]));
+      close(buf[2]);
+      return 0;
+    }
+    case 1: {
+      if (buf[0] == 0) {
+        ALOGE("E: %s: Invalid Arg", __FUNCTION__);
+        return -0x67;
+      }
+      gralloc1_device_t *device = get_device_or_null();
+      if (device == nullptr) {
+        ALOGE("E: %s: failed to get gralloc1 device", __FUNCTION__);
+        return -0x6f;
+      }
+      if (buf[3] == 0) {
+        cammw_util_munmap(reinterpret_cast<uint8_t *>(static_cast<intptr_t>(buf[0])),
+                          static_cast<uint32_t>(buf[1]));
+        close(buf[2]);
+        buf[2] = -1;
+      } else {
+        unsigned long long descriptor = 0xffffffffffffffffULL;
+        int rc2 = cammw_util_gralloc1_del_descriptor_list(buf[2], &descriptor);
+        if (rc2 != 0) {
+          return rc2;
+        }
+        int32_t release_fence = -1;
+        g_unlock_func(device, reinterpret_cast<buffer_handle_t>(static_cast<intptr_t>(buf[3])),
+                     &release_fence);
+        uint32_t destroy_rc = g_destroy_descriptor_func(device, descriptor);
+        if (destroy_rc > 0x7fffffffu) {
+          ALOGE("E: %s: descriptor destroy is failed", __FUNCTION__);
+        }
+        uint32_t release_rc = g_release_func(device, reinterpret_cast<buffer_handle_t>(static_cast<intptr_t>(buf[3])));
+        if (release_rc > 0x7fffffffu) {
+          ALOGE("E: %s: Buffer free failed", __FUNCTION__);
+          return -0x67;
+        }
+      }
+      return 0;
+    }
+    case 2:
+      return 0;
+    case 3:
+      if (buf[0] == 0) {
+        ALOGE("E: %s: Invalid Arg", __FUNCTION__);
+        return -0x67;
+      }
+      free(reinterpret_cast<void *>(static_cast<intptr_t>(buf[0])));
+      return 0;
+    default:
+      return -0x67;
+  }
+}
+
+// dispatch 到 ashmem/gralloc/heap 三種 backend 之一（type 2 不支援）。
+extern "C" int cammw_util_shmem_alloc_image_buf(int type, uint32_t param2, uint32_t width,
+                                                uint32_t height, int32_t format,
+                                                uint32_t color_space, void *out) {
+  if (out == nullptr) {
+    return -0x67;
+  }
+  memset(out, 0, 0x68);
+  int rc = cammw_util_init();
+  if (rc != 0) {
+    return rc;
+  }
+  switch (type) {
+    case 0:
+      return cammw_util_ashmem_alloc(width, height, format, color_space, 1, out);
+    case 1:
+      return cammw_util_gralloc_alloc(1, param2, width, static_cast<int>(height), format,
+                                      color_space, 1, out);
+    case 2:
+      return -0x6a;
+    case 3:
+      return cammw_util_heap_alloc(width, height, format, color_space, 1, out);
+    default:
+      return -0x67;
+  }
+}
+
+// attach：把一個已存在的 image buffer（另一個 process 傳過來的描述）
+// 複製一份、dup 兩個 fd，包成一個新的 private_handle 交給 gralloc1_retain。
+// 這裡的 CammwGrallocHandleFields 是我們自己組出來、要交給 gralloc 的
+// handle（不是解析既有 handle），所以直接用具名欄位寫，不走 word 陣列。
+extern "C" int cammw_util_shmem_attach_image_buf(const int32_t *src, uint32_t param2,
+                                                 uint32_t param3, uint32_t format, const int32_t *src5,
+                                                 int width, int height, int32_t *out) {
+  if (src == nullptr || out == nullptr) {
+    return -0x67;
+  }
+  memset(out, 0, 0x68);
+
+  int rc = cammw_util_init();
+  if (rc != 0) {
+    return rc;
+  }
+
+  const int src_type = src[4];
+  if (src_type - 2u < 2 || src_type == 0) {
+    return -0x6a;
+  }
+  if (src_type != 1) {
+    return -0x67;
+  }
+
+  // -------- 格式對照表（跟 gralloc_alloc/ashmem_alloc 是同一份格式碼空間）--------
+  int32_t gralloc_format;
+  int32_t plane_w = width;
+  int32_t plane_h = height;
+  if (format < 0x800000) {
+    if (format < 0x40001) {
+      if (format < 0x20000) {
+        if (format == 0 || format == 0x10000) return -0x6a;
+        if (format != 0x10001) return -0x67;
+        gralloc_format = 0x32315659;
+      } else if (format == 0x20000) {
+        gralloc_format = 0x109;
+      } else if (format == 0x20001) {
+        gralloc_format = 0x11;
+      } else if (format == 0x40000) {
+        gralloc_format = 0x10;
+      } else {
+        return -0x67;
+      }
+    } else if (format - 0x100000u < 4) {
+      return -0x6a;
+    } else if (format == 0x40001) {
+      gralloc_format = 0x10b;
+    } else if (format == 0x80000) {
+      plane_w = height * width;
+      plane_h = 1;
+      gralloc_format = 0x21;
+      goto build;
+    } else {
+      return -0x67;
+    }
+  } else if (format < 0x4000000) {
+    if (format - 0x1000000u > 2) {
+      if (format == 0x800000) return -0x6a;
+      if (format != 0x2000000) return -0x67;
+      return -0x6a;
+    }
+    gralloc_format = 0x21;
+  } else {
+    switch (format) {
+      case 0x4000000: gralloc_format = 3; break;
+      case 0x4000001: gralloc_format = 1; break;
+      case 0x4000002: gralloc_format = 0x10d; break;
+      case 0x4000003: gralloc_format = 0x10e; break;
+      default: return -0x67;
+    }
+  }
+  plane_h = height;
+  plane_w = width;
+
+build : {
+  // 從來源的 image_buffer_t 拿 fd/fd_metadata dup 出來。
+  auto *src_priv = reinterpret_cast<CammwGrallocHandleFields *const *>(
+      reinterpret_cast<const uint8_t *>(src) + 0xc);
+  int fd = dup(src[2]);
+  if (fd < 0) {
+    ALOGE("E: %s: dup fd is failed", __FUNCTION__);
+    return -0x6f;
+  }
+  int fd_metadata = dup((*src_priv)->fd_metadata);
+  if (fd_metadata < 0) {
+    ALOGE("E: %s: dup fd_metadata is failed", __FUNCTION__);
+    close(fd);
+    return -0x6f;
+  }
+
+  // 建一個 handle 出來交給 gralloc1_retain——欄位對照原版 puVar5[N] 那段
+  // native_handle_t 佈局：version=0xc, numFds=2, numInts=0x19, fd, fd_metadata,
+  // magic='gmsm', flags=CLIENT_ALLOCATED, width=plane_h(!), 其餘沿用來源。
+  auto *handle = static_cast<CammwGrallocHandleFields *>(::operator new(0x78));
+  memset(handle, 0, 0x78);
+  handle->version = 0xc;
+  handle->numFds = 2;
+  handle->fd = fd;
+  handle->fd_metadata = fd_metadata;
+  handle->magic = kCammwGrallocMagic;
+  handle->flags = 0x20000000;  // PRIV_FLAGS_CLIENT_ALLOCATED
+  // width/height 的對應（之前這裡左右顛倒，是「拍出來整張全綠」的元凶）：
+  //   原版 local_2c = param_7(height)、local_28 = param_6(width)；
+  //   0x481e 把 sp+0xc(=local_2c) 寫進 +0x20(height)、
+  //   0x486c 把 sp+0x10(=local_28) 寫進 +0x1c(width)。
+  // 也就是 width<-plane_w、height<-plane_h，就是最自然的對應。
+  // gralloc 的 GetYUVPlaneInfo() 直接把 hnd->width 當 stride 用
+  // （cstride = ALIGN(width/2,16)），一旦交換，chroma 指標就會指到
+  // 沒被寫過的記憶體 —— U=V=0、B 通道恆為 0 的全綠畫面。
+  handle->width = plane_w;             // 原版 0x486c：+0x1c
+  handle->height = plane_h;            // 原版 0x481e：+0x20
+  handle->unaligned_width = plane_w;   // 原版 0x4820：+0x24，跟 width 同值
+  handle->unaligned_height = plane_h;  // 原版 0x4820：+0x28，跟 height 同值
+  handle->format = gralloc_format;
+  // 原版 0x482c：bic.w r1, r3, r5, lsr #26（r3=1、r5=format）
+  handle->buffer_type = ((static_cast<uint32_t>(format) >> 26) & 1u) ? 0 : 1;
+  handle->size = static_cast<uint32_t>(src[1]);  // 原版 puVar5[0xd] = *(param_1+4)
+  // 原版 puVar5[0xe] = *param_5，也就是 offset(+0x38) 要填 src5[0]。
+  // 先前這裡漏掉，offset 永遠是 memset 後的 0——但實測 GOLD 值可以是
+  // 0x6000（fmt=0x4000003 那組）。offset 會被 gralloc 的
+  // MapBuffer(size, offset) 拿去算 base，錯了之後 chroma plane 就落在
+  // 沒被寫過的記憶體上，拍出來整張全綠（U=V=0、B 通道恆為 0）。
+  handle->offset = src5 != nullptr ? static_cast<uint32_t>(src5[0]) : 0u;
+  // 原版 0x484a 從 0x4930 的 literal pool 一次搬 16 bytes 進 +0x60，
+  // 實際內容是 producer_usage=0x3b、consumer_usage=0；0x4848 再寫
+  // layer_count=1 到 +0x70。這幾個欄位在 24/25 兩種佈局下偏移相同。
+  auto *raw = reinterpret_cast<uint8_t *>(handle);
+  *reinterpret_cast<uint64_t *>(raw + 0x60) = 0x3b;
+  *reinterpret_cast<uint64_t *>(raw + 0x68) = 0;
+  *reinterpret_cast<uint32_t *>(raw + 0x70) = 1;
+
+  gralloc1_device_t *device = get_device_or_null();
+  if (device == nullptr) {
+    close(fd);
+    close(fd_metadata);
+    ::operator delete(handle);
+    return -0x6f;
+  }
+
+  // numInts 一律照原版寫 25（Sony Android 9 的 sizeof(private_handle_t)=120）。
+  //
+  // 千萬不要「順手」改成 24 去迎合 LineageOS 的 gralloc（CAF 版加了
+  // #pragma pack(push,4)，NumInts()=24）。實測過：改成 24 之後 gralloc 會開始
+  // 接受這些 handle，隨即在 ImportHandleLocked() 裡覆寫 size/offset/gpuaddr，
+  // 而 Sony 的 consumer 依賴那些值——chroma plane 會讀到從未寫過的記憶體，
+  // 拍出來整張全綠（量測特徵：U=V=0、B 通道恆為 0）。在這裡把 size 寫回也
+  // 救不了，因為致命的覆寫發生在我們碰不到的其他 import 點。
+  //
+  // 正解是「讓 gralloc 繼續拒收」，fd 由下面的 detach 自己收乾淨。
+  handle->numInts = 0x19;
+
+  // 保持原版的寬鬆判斷（gralloc1_error_t 全是非負值，所以拒收其實會被當成
+  // 成功往下走）。這是刻意的：retain 失敗不影響後續使用，真正要補的是
+  // detach 沒關 fd。
+  int retain_rc = g_retain_func(device, reinterpret_cast<buffer_handle_t>(handle));
+  if (retain_rc < 0) {
+    ALOGE("E: %s: g_retain_func failed %d", __FUNCTION__, retain_rc);
+    close(fd);
+    close(fd_metadata);
+    ::operator delete(handle);
+    return -0x6f;
+  }
+
+  out[2] = fd;
+  reinterpret_cast<CammwGrallocHandleFields **>(out)[3] = handle;  // word index 3 = 0xc bytes
+  out[4] = src_type;
+  reinterpret_cast<uint32_t *>(out)[6] = format;
+  out[7] = static_cast<int32_t>(param2);
+  out[8] = static_cast<int32_t>(param3);
+  out[1] = src[1];
+  out[9] = src5 != nullptr ? src5[0] : 0;
+  out[10] = src5 != nullptr ? src5[1] : 0;
+  out[0xb] = src5 != nullptr ? src5[2] : 0;
+  out[0xc] = width;
+  out[0xd] = height;
+  out[0x11] = static_cast<int32_t>(param2);
+  out[0x12] = static_cast<int32_t>(param3);
+  out[0xb + 8] = src[4];  // = out[0x13]，沿用原本 param_1+4（來源 type）—— 待裝置驗證
+  return 0;
+}
+}
+
+// 修過 fd 洩漏的 detach（跟 camera/cacao/libcammw_util_leakfix 的邏輯
+// 一致，直接把驗證過的判斷邏輯搬進來，而不是照抄原版「完全不 close()」
+// 的 bug）。
+extern "C" int cammw_util_shmem_detach_image_buf(int32_t *buf) {
+  if (buf == nullptr) {
+    return -0x67;
+  }
+  int rc = cammw_util_init();
+  if (rc != 0) {
+    return rc;
+  }
+
+  const int type = buf[4];
+  if (type - 2u < 2 || type == 0) {
+    return -0x6a;
+  }
+  if (type != 1) {
+    return -0x67;
+  }
+
+  gralloc1_device_t *device = get_device_or_null();
+  auto *handle = reinterpret_cast<CammwGrallocHandleFields *>(
+      *reinterpret_cast<intptr_t *>(reinterpret_cast<uint8_t *>(buf) + 0xc));
+
+  // 修 bug 的部分：原版對 25-int handle 完全不 close()，指望 gralloc 的
+  // ReleaseBuffer 去關；但本機 gralloc（24-int）會直接拒收，fd 永遠關
+  // 不掉。這裡照 leakfix 驗證過的邏輯：只有「gralloc 一定會拒絕、而且
+  // 是我們手工建的 client-allocated handle」才自己關。
+  int fd = -1;
+  int fd_metadata = -1;
+  if (handle != nullptr && handle->numFds == kCammwGrallocNumFds && handle->magic == kCammwGrallocMagic) {
+    // 本機 gralloc（CAF 版，gr_priv_handle.h 有 #pragma pack(push,4)）的
+    // NumInts() 是 24，而 attach 建的是 25，所以一定會被拒收——這正是我們
+    // 要自己 close 的情況。反過來說，如果哪天 gralloc 換成 A9 佈局（25）而
+    // 真的接受了，這個判斷就會是 false，close 交給 g_release_func，不會
+    // 撞成 double close。
+    constexpr int kGrallocNumInts = 24;
+    const bool gralloc_will_reject = handle->version != 12 || handle->numInts != kGrallocNumInts;
+    const bool client_allocated = (handle->flags & 0x20000000) != 0;
+    if (gralloc_will_reject && client_allocated) {
+      fd = handle->fd;
+      fd_metadata = handle->fd_metadata;
+    }
+  }
+
+  if (device != nullptr) {
+    uint32_t release_rc = g_release_func(device, reinterpret_cast<buffer_handle_t>(handle));
+    if (release_rc > 0x7fffffffu) {
+      ALOGE("E: %s: g_release_func failed %u", __FUNCTION__, release_rc);
+    }
+  }
+  if (handle != nullptr) {
+    ::operator delete(handle);
+  }
+
+  if (fd >= 0) close(fd);
+  if (fd_metadata >= 0) close(fd_metadata);
+  return 0;
+}
+
+// 對照 decompiled.c @ 0x14e68 完整讀完了（先前只讀了前半段）。
+//
+// mode 語意（跟先前猜測的「mode<3 就 unlock」不一樣，訂正）：
+//   mode 0 -> 直接 (re)lock，不先 unlock
+//   mode 1 -> 只 unlock
+//   mode 2 -> 先 unlock 再 lock（刷新 CPU 端指標）
+//   mode >=3 -> Invalid Arg
+// 不管哪條路徑，只要最後動作成功，就把 buf[5] 的最低位元組清成 0
+// （這個旗標比較像「待清理」，不是「目前是否鎖著」——lock 跟 unlock
+// 成功後都會清它）。
+// type 只有 1（gralloc）會真的做事；0/2/3 一律回 -0x6a（UNSUPPORTED）。
+extern "C" int cammw_util_shmem_clean_buf(cammw_util_image_buffer_t *buf_desc, uint32_t mode) {
+  int32_t *buf = buf_desc != nullptr ? buf_desc->w : nullptr;
+  if (buf == nullptr) {
+    return -0x67;
+  }
+  int rc = cammw_util_init();
+  if (rc != 0) {
+    return rc;
+  }
+  const int type = buf[4];
+  if (type - 2u < 2 || type == 0) {
+    return -0x6a;
+  }
+  // type == 1（gralloc）以外的值理論上不會走到這裡（上面已經濾掉
+  // 0/2/3），但保留這個防呆，跟原版一樣只信任 type==1。
+  if (type != 1) {
+    return -0x6a;
+  }
+  if (buf[0] == 0) {
+    ALOGE("E: %s: Invalid Arg", __FUNCTION__);
+    return -0x67;
+  }
+  if (mode >= 3) {
+    ALOGE("E: %s: Invalid Arg", __FUNCTION__);
+    return -0x67;
+  }
+  gralloc1_device_t *device = get_device_or_null();
+  if (device == nullptr) {
+    ALOGE("E: %s: failed to get gralloc1 device", __FUNCTION__);
+    return -0x6f;
+  }
+  auto handle = reinterpret_cast<buffer_handle_t>(static_cast<intptr_t>(buf[3]));
+  int32_t fence = -1;
+
+  if (mode != 0) {
+    // mode 1 或 2：先 unlock。lock_flag(buf[5]) 已經是 0（沒鎖著）就跳過
+    // unlock 直接當作成功。
+    const bool already_unlocked = (reinterpret_cast<uint8_t *>(&buf[5])[0]) == 0;
+    uint32_t unlock_rc = 0;
+    if (!already_unlocked) {
+      unlock_rc = g_unlock_func(device, handle, &fence);
+    }
+    if (unlock_rc != 0) {
+      ALOGE("E: %s: gralloc1_unlock_failed, e %u", __FUNCTION__, unlock_rc);
+      return -0x6f;
+    }
+    if (mode == 1) {
+      reinterpret_cast<uint8_t *>(&buf[5])[0] = 0;
+      return 0;
+    }
+    // mode == 2：繼續往下走到 (re)lock。
+  }
+
+  // mode 0，或 mode 2 unlock 成功後的 relock：原版這裡傳的 rect 是全 0
+  // （不是像 gralloc_make_buf_from_private_handle 那樣傳真正的
+  // width/height），語意上像是「整塊 buffer、不指定區域」的慣例用法。
+  {
+    const gralloc1_rect_t rect = {0, 0, 0, 0};
+    void *mapped = nullptr;
+    uint32_t lock_rc =
+        g_lock_func(device, handle, /*producerUsage=*/0x66, /*consumerUsage=*/0, &rect, &mapped, fence);
+    if (lock_rc != 0) {
+      ALOGE("E: %s: gralloc1_lock_failed, err %u", __FUNCTION__, lock_rc);
+      return -0x6f;
+    }
+    reinterpret_cast<uint8_t *>(&buf[5])[0] = 0;
+    return 0;
+  }
+}
+
+extern "C" int cammw_util_shmem_make_image_buf_from_handle(const void *handle, int width, int height,
+                                                            uint32_t color_space, void *out) {
+  if (width == 0 || color_space >= 4 || handle == nullptr || height == 0 || out == nullptr) {
+    ALOGE("E: %s: Invalid Arg", __FUNCTION__);
+    return -0x67;
+  }
+  memset(out, 0, 0x68);
+
+  int rc = cammw_util_init();
+  if (rc != 0) {
+    return rc;
+  }
+  gralloc1_device_t *device = get_device_or_null();
+  if (device == nullptr) {
+    ALOGE("E: %s: failed to get gralloc1 device", __FUNCTION__);
+    return -0x6f;
+  }
+
+  auto *h = static_cast<const CammwGrallocHandleFields *>(handle);
+  int32_t fmt = h->format;
+  uint32_t pixel_format;
+  if (fmt < 0x102) {
+    if (fmt == 0x11) {
+      pixel_format = 0x20001;
+    } else if (fmt == 0x21) {
+      pixel_format = 0x1000001;
+    } else if (fmt == 0x23) {
+      pixel_format = 0x20001;  // 跟 0x11 同一條路徑，原版就是共用
+    } else {
+      ALOGE("E: %s: Unknown Format", __FUNCTION__);
+      return -0x67;
+    }
+  } else if (fmt == 0x7fa30c04 || fmt == 0x113 || fmt == 0x102) {
+    pixel_format = 0x20000;
+  } else {
+    ALOGE("E: %s: Unknown Format", __FUNCTION__);
+    return -0x67;
+  }
+
+  return cammw_util_gralloc_make_buf_from_private_handle(device, reinterpret_cast<const int *>(1),
+                                                          width, height,
+                                                          static_cast<int>(pixel_format), color_space,
+                                                          handle, 1, out);
+}
+
+// 這兩個原版是 `bx lr` 的空函式（先前那輪、還有這輪 kong 都沒分析到，
+// 但既有記錄講得很明確：純粹的 no-op stub，符號存在只是為了保留匯出
+// 介面）。
+extern "C" int cammw_util_shmem_register_buf(void *) { return 0; }
+extern "C" int cammw_util_shmem_unregister_buf(void *) { return 0; }
