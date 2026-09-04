@@ -37,7 +37,7 @@
 #define LOG_TAG "cammw_util"
 
 #include "cammw_buf.h"
-#include "cammw_priv_handle.h"
+#include <gr_priv_handle.h>
 #include "cammw_ptrlist.h"
 #include "cammw_util_internal.h"
 
@@ -146,7 +146,7 @@ int cammw_util_gralloc1_del_descriptor_list(int fd, unsigned long long *out_desc
 // 簽名（來自 kong 的簽名推斷 + 逐行核對實際存取）：
 //   (gralloc1_device*, const int *attribute_values, int width, int height,
 //    int pixel_format, uint32_t usage_or_color_space,
-//    const CammwGrallocHandleFields *handle, uint8_t populate_metadata,
+//    const private_handle_t *handle, uint8_t populate_metadata,
 //    cammw_buf_t *out)
 //
 // lock 分兩條路，由 handle->format 決定：
@@ -171,7 +171,7 @@ int cammw_util_gralloc1_del_descriptor_list(int fd, unsigned long long *out_desc
 //   的版本。
 extern "C" int cammw_util_gralloc_make_buf_from_private_handle(
     const void *gralloc_device, const int *attribute_values, int width, int height,
-    int pixel_format, uint32_t usage_or_color_space, const CammwGrallocHandleFields *handle,
+    int pixel_format, uint32_t usage_or_color_space, const private_handle_t *handle,
     uint8_t populate_metadata, cammw_buf_t *out) {
   if (gralloc_device == nullptr || handle == nullptr || out == nullptr) {
     ALOGE("E: %s: Invalid Arg", "cammw_util_gralloc_make_buf_from_private_handle");

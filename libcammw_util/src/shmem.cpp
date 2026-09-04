@@ -25,7 +25,7 @@
 
 #define LOG_TAG "cammw_util"
 
-#include "cammw_priv_handle.h"
+#include <gr_priv_handle.h>
 #include "cammw_util_internal.h"
 
 
@@ -271,8 +271,8 @@ extern "C" int cammw_util_shmem_alloc_image_buf(int type, uint32_t param2, uint3
 
 // attach：把一個已存在的 image buffer（另一個 process 傳過來的描述）
 // 複製一份、dup 兩個 fd，包成一個新的 private_handle 交給 gralloc1_retain。
-// 這裡的 CammwGrallocHandleFields 是我們自己組出來、要交給 gralloc 的
-// handle（不是解析既有 handle），所以直接用具名欄位寫，不走 word 陣列。
+// 這裡建的是要交給 gralloc 的 private_handle_t（不是解析既有 handle），
+// 直接用本機 gralloc 的建構子，不自己排佈局。
 extern "C" int cammw_util_shmem_attach_image_buf(const int32_t *src, uint32_t param2,
                                                  uint32_t param3, uint32_t format, const int32_t *src5,
                                                  int width, int height, int32_t *out) {
@@ -346,7 +346,7 @@ extern "C" int cammw_util_shmem_attach_image_buf(const int32_t *src, uint32_t pa
 
 build : {
   // 從來源的 image_buffer_t 拿 fd/fd_metadata dup 出來。
-  auto *src_priv = reinterpret_cast<CammwGrallocHandleFields *const *>(
+  auto *src_priv = reinterpret_cast<private_handle_t *const *>(
       reinterpret_cast<const uint8_t *>(src) + 0xc);
   int fd = dup(src[2]);
   if (fd < 0) {
@@ -360,46 +360,39 @@ build : {
     return -0x6f;
   }
 
-  // 建一個 handle 出來交給 gralloc1_retain——欄位對照原版 puVar5[N] 那段
-  // native_handle_t 佈局：version=0xc, numFds=2, numInts=0x19, fd, fd_metadata,
-  // magic='gmsm', flags=CLIENT_ALLOCATED, width=plane_h(!), 其餘沿用來源。
-  auto *handle = static_cast<CammwGrallocHandleFields *>(::operator new(0x78));
-  memset(handle, 0, 0x78);
-  handle->version = 0xc;
-  handle->numFds = 2;
-  handle->fd = fd;
-  handle->fd_metadata = fd_metadata;
-  handle->magic = kCammwGrallocMagic;
-  handle->flags = 0x20000000;  // PRIV_FLAGS_CLIENT_ALLOCATED
+  // 建一個 handle 出來交給 gralloc1_retain。
+  //
+  // 直接用本機 gralloc 的 private_handle_t 建構子（gr_priv_handle.h），
+  // 不再自己手寫結構與偏移：version / numFds / numInts / magic /
+  // layer_count / base / gpuaddr / id 全部由建構子按本機佈局填好，
+  // 我們只要提供真正屬於這個 buffer 的欄位。這樣哪天 CAF 改了
+  // private_handle_t 的佈局，這裡會自動跟著對，不需要人工同步。
+  //
   // width/height 的對應（之前這裡左右顛倒，是「拍出來整張全綠」的元凶）：
   //   原版 local_2c = param_7(height)、local_28 = param_6(width)；
   //   0x481e 把 sp+0xc(=local_2c) 寫進 +0x20(height)、
   //   0x486c 把 sp+0x10(=local_28) 寫進 +0x1c(width)。
-  // 也就是 width<-plane_w、height<-plane_h，就是最自然的對應。
   // gralloc 的 GetYUVPlaneInfo() 直接把 hnd->width 當 stride 用
   // （cstride = ALIGN(width/2,16)），一旦交換，chroma 指標就會指到
   // 沒被寫過的記憶體 —— U=V=0、B 通道恆為 0 的全綠畫面。
-  handle->width = plane_w;             // 原版 0x486c：+0x1c
-  handle->height = plane_h;            // 原版 0x481e：+0x20
-  handle->unaligned_width = plane_w;   // 原版 0x4820：+0x24，跟 width 同值
-  handle->unaligned_height = plane_h;  // 原版 0x4820：+0x28，跟 height 同值
-  handle->format = gralloc_format;
-  // 原版 0x482c：bic.w r1, r3, r5, lsr #26（r3=1、r5=format）
-  handle->buffer_type = ((static_cast<uint32_t>(format) >> 26) & 1u) ? 0 : 1;
-  handle->size = static_cast<uint32_t>(src[1]);  // 原版 puVar5[0xd] = *(param_1+4)
-  // 原版 puVar5[0xe] = *param_5，也就是 offset(+0x38) 要填 src5[0]。
-  // 先前這裡漏掉，offset 永遠是 memset 後的 0——但實測 GOLD 值可以是
-  // 0x6000（fmt=0x4000003 那組）。offset 會被 gralloc 的
-  // MapBuffer(size, offset) 拿去算 base，錯了之後 chroma plane 就落在
-  // 沒被寫過的記憶體上，拍出來整張全綠（U=V=0、B 通道恆為 0）。
+  //
+  // 原版 0x482c：bic.w r1, r3, r5, lsr #26（r3=1、r5=format）決定 buffer_type；
+  // 0x484a 從 literal pool 搬進 +0x60 的是 producer_usage=0x3b、
+  // consumer_usage=0；0x4848 寫 layer_count=1。
+  auto *handle = new private_handle_t(
+      fd, fd_metadata, private_handle_t::PRIV_FLAGS_CLIENT_ALLOCATED,
+      plane_w, plane_h, plane_w, plane_h, gralloc_format,
+      ((static_cast<uint32_t>(format) >> 26) & 1u) ? 0 : 1,
+      static_cast<unsigned int>(src[1]),
+      static_cast<gralloc1_producer_usage_t>(0x3b),
+      static_cast<gralloc1_consumer_usage_t>(0));
+
+  // 原版 puVar5[0xe] = *param_5，也就是 offset 要填 src5[0]（建構子預設 0）。
+  // 先前這裡漏掉，offset 永遠是 0——但實測 GOLD 值可以是 0x6000
+  // （fmt=0x4000003 那組）。offset 是隨 handle 攜帶、由 consumer 自己加的
+  // 資料起點，錯了之後 chroma plane 就落在沒被寫過的記憶體上，
+  // 拍出來整張全綠（U=V=0、B 通道恆為 0）。
   handle->offset = src5 != nullptr ? static_cast<uint32_t>(src5[0]) : 0u;
-  // 原版 0x484a 從 0x4930 的 literal pool 一次搬 16 bytes 進 +0x60，
-  // 實際內容是 producer_usage=0x3b、consumer_usage=0；0x4848 再寫
-  // layer_count=1 到 +0x70。這幾個欄位在 24/25 兩種佈局下偏移相同。
-  auto *raw = reinterpret_cast<uint8_t *>(handle);
-  *reinterpret_cast<uint64_t *>(raw + 0x60) = 0x3b;
-  *reinterpret_cast<uint64_t *>(raw + 0x68) = 0;
-  *reinterpret_cast<uint32_t *>(raw + 0x70) = 1;
 
   gralloc1_device_t *device = get_device_or_null();
   if (device == nullptr) {
@@ -409,14 +402,11 @@ build : {
     return -0x6f;
   }
 
-  // numInts 要填「本機 gralloc 的 NumInts()」，讓 retain 真的成功——這才是
-  // 跟原版語意一致的作法（Android 15 相容措施）。
-  //
-  // 原版在 A9 上寫 25，是因為 Sony A9 的 gr_priv_handle.h 沒有
-  // #pragma pack(push,4)，sizeof(private_handle_t)=120 → NumInts()=25。
-  // LineageOS 用的 CAF 2019 版加了 pack(4)，sizeof=116 → NumInts()=24。
-  // 同一個語意（= 本機 gralloc 的 NumInts）在 A15 上的值就是 24。
-  handle->numInts = kGrallocNumInts;
+  // numInts 不用自己填：private_handle_t 的建構子已經寫成本機的
+  // NumInts()。原版在 A9 上是 25（Sony A9 的 gr_priv_handle.h 沒有
+  // #pragma pack(push,4)，sizeof=120），LineageOS 的 CAF 2019 版有 pack(4)、
+  // sizeof=116 → 24。語意本來就是「本機 gralloc 的 NumInts」，交給建構子
+  // 處理才不會有第二份需要人工同步的常數。
 
   // Android 15 相容措施：CAF 2019 的 BufferManager::ImportHandleLocked() 多了
   //
@@ -476,7 +466,7 @@ build : {
   handle->offset_metadata = saved_offset_metadata;
 
   out[2] = fd;
-  reinterpret_cast<CammwGrallocHandleFields **>(out)[3] = handle;  // word index 3 = 0xc bytes
+  reinterpret_cast<private_handle_t **>(out)[3] = handle;  // word index 3 = 0xc bytes
   out[4] = src_type;
   reinterpret_cast<uint32_t *>(out)[6] = format;
   out[7] = static_cast<int32_t>(param2);
@@ -515,29 +505,17 @@ extern "C" int cammw_util_shmem_detach_image_buf(int32_t *buf) {
   }
 
   gralloc1_device_t *device = get_device_or_null();
-  auto *handle = reinterpret_cast<CammwGrallocHandleFields *>(
+  auto *handle = reinterpret_cast<private_handle_t *>(
       *reinterpret_cast<intptr_t *>(reinterpret_cast<uint8_t *>(buf) + 0xc));
 
-  // 修 bug 的部分：原版對 25-int handle 完全不 close()，指望 gralloc 的
-  // ReleaseBuffer 去關；但本機 gralloc（24-int）會直接拒收，fd 永遠關
-  // 不掉。這裡照 leakfix 驗證過的邏輯：只有「gralloc 一定會拒絕、而且
-  // 是我們手工建的 client-allocated handle」才自己關。
-  int fd = -1;
-  int fd_metadata = -1;
-  if (handle != nullptr && handle->numFds == kCammwGrallocNumFds && handle->magic == kCammwGrallocMagic) {
-    // 本機 gralloc（CAF 版，gr_priv_handle.h 有 #pragma pack(push,4)）的
-    // NumInts() 是 24，而 attach 建的是 25，所以一定會被拒收——這正是我們
-    // 要自己 close 的情況。反過來說，如果哪天 gralloc 換成 A9 佈局（25）而
-    // 真的接受了，這個判斷就會是 false，close 交給 g_release_func，不會
-    // 撞成 double close。
-    const bool gralloc_will_reject = handle->version != 12 || handle->numInts != kGrallocNumInts;
-    const bool client_allocated = (handle->flags & 0x20000000) != 0;
-    if (gralloc_will_reject && client_allocated) {
-      fd = handle->fd;
-      fd_metadata = handle->fd_metadata;
-    }
-  }
-
+  // fd 的生命週期交給 gralloc——這也是原版的作法。
+  //
+  // 曾經有一版在這裡自己 close()：那時 attach 把 numInts 寫成 A9 的 25，
+  // 本機 gralloc（NumInts()=24）在 retain 時就拒收，handle 從來沒被登記，
+  // ReleaseBuffer 自然也不會關 fd，開關相機十幾次就累積到 2600+ 個 fd。
+  // 現在 attach 用 private_handle_t 的建構子填本機 NumInts()，retain 會成功、
+  // handle 進到 gralloc 的 handles_map_，release 就會把兩個 ion fd 收乾淨，
+  // 不需要（也不可以）再自己關，否則是 double close。
   if (device != nullptr) {
     uint32_t release_rc = g_release_func(device, reinterpret_cast<buffer_handle_t>(handle));
     if (release_rc > 0x7fffffffu) {
@@ -545,11 +523,8 @@ extern "C" int cammw_util_shmem_detach_image_buf(int32_t *buf) {
     }
   }
   if (handle != nullptr) {
-    ::operator delete(handle);
+    delete handle;
   }
-
-  if (fd >= 0) close(fd);
-  if (fd_metadata >= 0) close(fd_metadata);
   return 0;
 }
 
@@ -652,7 +627,7 @@ extern "C" int cammw_util_shmem_make_image_buf_from_handle(const void *handle, i
     return -0x6f;
   }
 
-  auto *h = static_cast<const CammwGrallocHandleFields *>(handle);
+  auto *h = static_cast<const private_handle_t *>(handle);
   int32_t fmt = h->format;
   uint32_t pixel_format;
   if (fmt < 0x102) {
