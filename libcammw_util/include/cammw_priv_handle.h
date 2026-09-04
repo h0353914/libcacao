@@ -46,3 +46,9 @@ static_assert(offsetof(CammwGrallocHandleFields, base) == 0x40, "base");
 // gralloc1.h 需要的 kMagic/kNumFds 常數，跟真正 private_handle_t 一致。
 constexpr int32_t kCammwGrallocMagic = 'gmsm';
 constexpr int kCammwGrallocNumFds = 2;
+
+// 本機 gralloc 的 private_handle_t::NumInts()。
+//   Sony A9（gr_priv_handle.h 無 pack）：sizeof=120 → 25
+//   LineageOS / CAF 2019（有 #pragma pack(push,4)）：sizeof=116 → 24
+// 我們建的 handle 要填這個值，retain 才會被 gralloc 接受。
+constexpr int kGrallocNumInts = 24;

@@ -409,17 +409,55 @@ build : {
     return -0x6f;
   }
 
-  // numInts 一律照原版寫 25（Sony Android 9 的 sizeof(private_handle_t)=120）。
+  // numInts 要填「本機 gralloc 的 NumInts()」，讓 retain 真的成功——這才是
+  // 跟原版語意一致的作法（Android 15 相容措施）。
   //
-  // 千萬不要「順手」改成 24 去迎合 LineageOS 的 gralloc（CAF 版加了
-  // #pragma pack(push,4)，NumInts()=24）。實測過：改成 24 之後 gralloc 會開始
-  // 接受這些 handle，隨即在 ImportHandleLocked() 裡覆寫 size/offset/gpuaddr，
-  // 而 Sony 的 consumer 依賴那些值——chroma plane 會讀到從未寫過的記憶體，
-  // 拍出來整張全綠（量測特徵：U=V=0、B 通道恆為 0）。在這裡把 size 寫回也
-  // 救不了，因為致命的覆寫發生在我們碰不到的其他 import 點。
+  // 原版在 A9 上寫 25，是因為 Sony A9 的 gr_priv_handle.h 沒有
+  // #pragma pack(push,4)，sizeof(private_handle_t)=120 → NumInts()=25。
+  // LineageOS 用的 CAF 2019 版加了 pack(4)，sizeof=116 → NumInts()=24。
+  // 同一個語意（= 本機 gralloc 的 NumInts）在 A15 上的值就是 24。
+  handle->numInts = kGrallocNumInts;
+
+  // Android 15 相容措施：CAF 2019 的 BufferManager::ImportHandleLocked() 多了
   //
-  // 正解是「讓 gralloc 繼續拒收」，fd 由下面的 detach 自己收乾淨。
-  handle->numInts = 0x19;
+  //     hnd->size = lseek(hnd->fd, 0, SEEK_END);
+  //     hnd->offset = 0;
+  //     hnd->offset_metadata = 0;
+  //
+  // 註解寫「這些欄位沒有被傳輸」，但它們其實都在 private_handle_t 的 int
+  // payload 裡。我們建的是「大 dmabuf 裡的一段子區域」（size=0xa000、
+  // offset=0x6000）。
+  //
+  // 注意 offset 不是給 mmap 用的：IonAlloc::MapBuffer() 永遠是
+  // mmap(0, size, ..., fd, 0)，offset 只進 debug log，所以 base 一直是整塊
+  // dmabuf 的開頭。offset 是隨 handle 攜帶的資訊——「資料在 base + offset」
+  // ——由讀 buffer 的一方自己加（gralloc 內部只有 CleanBuffer 的 cache
+  // 維護範圍與 FreeBuffer 會用到它）。所以 offset 被歸零之後，consumer
+  // 算出來的資料起點就少了 0x6000，chroma plane 落在從未寫入的記憶體上
+  // → 拍出來整張全綠（U=V=0、B 通道恆為 0）。
+  //
+  // A9 原廠沒有這段覆寫：實機反組譯 SOV36 47.2.C.1.126 的
+  // /vendor/lib/hw/gralloc.msm8998.so，BufferManager::ImportHandleLocked
+  // 整個函式只有 140 bytes，匯入兩個 ion fd 之後只有
+  //     vstr d16, [r4, #0x40]   ; base = 0
+  //     vstr d16, [r4, #0x48]   ; base_metadata = 0
+  // size(+0x34)/offset(+0x38)/offset_metadata(+0x3c) 完全不動，整個 library
+  // 連 lseek 都沒有匯入。也就是說 A9 的 25 與 A15 的 24 本來就該等價，
+  // 差別全在這三行。
+  //
+  // 實機量測（poplardcm，原廠 gralloc + numInts=24）：把 provider 記憶體裡
+  // 60 個 flags=0x20000000 的 handle 撈出來比對，import 前 offset=0x6000、
+  // import 後全部變成 0；size 因為 lseek 剛好回傳 0xa000 所以沒變。也就是
+  // 真正致命的是 offset 被歸零，照片量出來 R=0、B=0（maxB=0）、G=0.535，
+  // 就是 U=V=0 的純綠。
+  //
+  // 因為不能改 LineageOS 的 display HAL，就在呼叫端把值補回去：retain
+  // 之後立刻把三個欄位寫回原值。ImportHandleLocked 只在「第一次 retain
+  // 且 handle 尚未註冊」時執行（RetainBuffer 先查 handles_map_，命中就只
+  // IncRef），而 handle 指標由我們自己持有且不變，所以補一次就夠。
+  const uint32_t saved_size = handle->size;
+  const uint32_t saved_offset = handle->offset;
+  const uint32_t saved_offset_metadata = handle->offset_metadata;
 
   // 保持原版的寬鬆判斷（gralloc1_error_t 全是非負值，所以拒收其實會被當成
   // 成功往下走）。這是刻意的：retain 失敗不影響後續使用，真正要補的是
@@ -432,6 +470,10 @@ build : {
     ::operator delete(handle);
     return -0x6f;
   }
+
+  handle->size = saved_size;
+  handle->offset = saved_offset;
+  handle->offset_metadata = saved_offset_metadata;
 
   out[2] = fd;
   reinterpret_cast<CammwGrallocHandleFields **>(out)[3] = handle;  // word index 3 = 0xc bytes
@@ -488,7 +530,6 @@ extern "C" int cammw_util_shmem_detach_image_buf(int32_t *buf) {
     // 要自己 close 的情況。反過來說，如果哪天 gralloc 換成 A9 佈局（25）而
     // 真的接受了，這個判斷就會是 false，close 交給 g_release_func，不會
     // 撞成 double close。
-    constexpr int kGrallocNumInts = 24;
     const bool gralloc_will_reject = handle->version != 12 || handle->numInts != kGrallocNumInts;
     const bool client_allocated = (handle->flags & 0x20000000) != 0;
     if (gralloc_will_reject && client_allocated) {
