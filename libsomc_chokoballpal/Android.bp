@@ -1,0 +1,54 @@
+// libsomc_chokoballpal —— 從原廠 blob 重建，完整取代
+// vendor/lib/libsomc_chokoballpal.so。
+//
+// 這一層是相機管線的 PAL：把 cammw_util 的 shared-memory buffer 包成
+// android::GraphicBuffer 交給上層。原廠 blob 只有約 1.3 KB 的自家程式碼
+// （其餘是靜態連進去的 libunwind），對外 12 個符號。
+//
+// mangled name 就是 ABI，型別名稱與 namespace 不可更動；細節見
+// include/ckb_pal_buf.h 的註解。
+//
+// cammw_util_shmem_* 由 libcammw.so 提供（原廠 A9 的 libcammw.so 直接
+// 匯出這組符號），所以這裡把 libcammw 列為相依，DT_NEEDED 與原版一致。
+
+// 這顆直接以 libsomc_chokoballpal 的名字安裝，取代原廠 blob，所以
+// yoshino-common 的 cc_prebuilt_library_shared 與 proprietary-files.txt
+// 那一行都已移除，extract-files.py 不需要任何 fixup。做法與 libcammw_util 相同。
+cc_library_shared {
+    name: "libsomc_chokoballpal",
+    stem: "libsomc_chokoballpal",
+
+    srcs: ["src/*.cpp"],
+    local_include_dirs: ["include"],
+
+    shared_libs: [
+        "liblog",
+        "libutils",
+        "libui",
+        "libcammw",
+    ],
+
+    rtti: false,
+
+    // 與 tools_Libcacao/CMakeLists.txt 的 A9 建置保持一致：原版是靜態連
+    // libunwind_llvm 才有 _Unwind_Resume / __aeabi_unwind_cpp_pr0/1，我們
+    // 不靜態連，就把 unwinding 需求拿掉，兩邊產出的程式碼才等價。
+    cflags: [
+        "-fno-exceptions",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
+    ],
+
+    // Android 9 的 linker 不認得 DT_RELR（Android 11 才加入），會印
+    // "unused DT entry: unknown (type 0x24 ...)" 然後把那批相對重定位整個跳過，
+    // vtable / GOT 沒被 relocate，一進到 CkbService thread 就 SIGSEGV。
+    // 原版用的是傳統 DT_REL + DT_RELCOUNT，這裡照做。
+    // （cacao/Android.bp 的 libcacao_32bit_build_defaults 也是為了同一件事）
+    ldflags: [
+        "-Wl,--pack-dyn-relocs=none",
+    ],
+
+    vendor: true,
+    compile_multilib: "32",
+    stl: "libc++",
+}

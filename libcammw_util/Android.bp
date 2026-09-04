@@ -10,9 +10,10 @@
 // libcammw_util_real.so 都不再需要，libexcal_core.so 也維持原廠未修改的
 // DT_NEEDED（只有 libcammw_util.so），extract-files.py 不需要任何 fixup。
 //
-// 重要：attach 建 private_handle_t 時 numInts 必須維持原廠的 25，不可以
-// 改成 LineageOS gralloc 期望的 24——改了 gralloc 會開始接受並在
-// ImportHandleLocked() 覆寫 size/offset/gpuaddr，拍出來整張全綠。
+// 重要：attach 建 private_handle_t 時 numInts 填 kGrallocNumInts（本機
+// gralloc 的 NumInts()，A15 上是 24）。CAF 2019 的 ImportHandleLocked()
+// 會把 size/offset 覆寫成「整塊 dmabuf / 0」，所以 retain 之後要把那三個
+// 欄位寫回去，否則 chroma plane 讀到沒寫過的記憶體、拍出來整張全綠。
 // 詳見 src/shmem.cpp 內的註解。
 
 cc_library_shared {
