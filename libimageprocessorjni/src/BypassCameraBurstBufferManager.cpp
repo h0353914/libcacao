@@ -35,13 +35,21 @@ extern "C" void BypassCameraBurstBufferManager_deleteBuffers(
         android::Vector<cacao::ImageBuf*>* bufs);
 
 // ─────────────────────────────────────────────────────
-// getJpegBufferSize — 計算 JPEG buffer 大小
+// getJpegBufferSize — 取得 JPEG buffer 大小
+//
+// [已修正，20260907] 原本這裡用自己猜的公式 w*h*2 + 0x10000，實測配出來的
+// buffer 剛好是原廠的兩倍（5504x3096 → 34,146,304 B = 32.57MiB，A9 原廠是
+// 17,238,528 B = 16.44MiB），跟 excal_buf_mgr 的
+// 「RegisterBufID:62 ... buf_sz=32.57MB」完全對得上。
+//
+// 逐指令反組譯原始 so_32 BypassCameraBurstBufferManager_initializeSurface
+// (0xa3f0) 確認：0xa5b0 的 bl 目標 0xd9ec 是一個 long-branch veneer
+// (bx pc / ldr r12,[pc,#0] / add pc,r12,pc)，解出 → PLT 0x6ef0 →
+// GOT 0x11f7c → _ZN5cacao14ProcessFactory17getJpegBufferSizeENS_9ImageSizeE。
+//
+// 也就是說大小根本不是本地算的，而是向 cacao 服務查詢（ICacao 交易碼 10），
+// 由 HAL 依實際 IQ/輸出設定回報。這裡改回呼叫原本的那支。
 // ─────────────────────────────────────────────────────
-static int32_t getJpegBufferSize(uint32_t w, uint32_t h) {
-    // JPEG/BLOB: w * h * 2 + 0x10000 (matching ImageBuf.cpp fmt=0x1000001)
-    int32_t sz = (int32_t)w * (int32_t)h * 2 + 0x10000;
-    return sz > 0 ? sz : 0;
-}
 
 // ─────────────────────────────────────────────────────
 // BypassCameraBurstBufferManager_initializeSurface
@@ -133,7 +141,10 @@ extern "C" int BypassCameraBurstBufferManager_initializeSurface(
         window->query(window, NATIVE_WINDOW_HEIGHT, &h);
         ALOGD("initializeSurface: Surface size=%dx%d", w, h);
 
-        int32_t jpegSize = getJpegBufferSize(w, h);
+        cacao::ImageSize imgSize;
+        imgSize.width  = (uint32_t)w;
+        imgSize.height = (uint32_t)h;
+        int32_t jpegSize = (int32_t)cacao::ProcessFactory::getJpegBufferSize(imgSize);
         ALOGD("initializeSurface: jpegBufferSize=%d", jpegSize);
         if (jpegSize < 1) {
             ALOGE("initializeSurface: jpegBufferSize invalid");
