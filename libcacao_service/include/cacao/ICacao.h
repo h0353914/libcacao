@@ -18,61 +18,65 @@
 #include <utils/Vector.h>
 #include <cacao/ProcessCtrlGatewayBase.h>
 
-namespace cacao {
-class ImageBuf;
+namespace cacao
+{
+    class ImageBuf;
 } // namespace cacao
 
-namespace android {
+namespace android
+{
 
-class ICacaoProcessCallback;
+    class ICacaoProcessCallback;
 
-// ICacao — 單一相機連線的 Binder 介面
-class ICacao : public IInterface {
-public:
-    ICacao();
-    virtual ~ICacao();
+    // ICacao — 單一相機連線的 Binder 介面
+    class ICacao : public IInterface
+    {
+    public:
+        ICacao();
+        virtual ~ICacao();
 
-    static sp<ICacao> asInterface(const sp<IBinder>& obj);
-    static const String16 descriptor;
-    virtual const String16& getInterfaceDescriptor() const;
+        static sp<ICacao> asInterface(const sp<IBinder> &obj);
+        static const String16 descriptor;
+        virtual const String16 &getInterfaceDescriptor() const;
 
-    // vtable slot 4 — tx code 1
-    virtual void disconnect() = 0;
-    // vtable slot 5 — tx code 2
-    virtual int start(const sp<IMemory>& mem,
-                      cacao::ISerialize::SerializedData sd) = 0;
-    // vtable slot 6 — tx code 3
-    virtual int stop() = 0;
-    // vtable slot 7 — tx code 4
-    virtual int setConfig(int configId, const sp<IMemory>& mem,
+        // vtable slot 4 — tx code 1
+        virtual void disconnect() = 0;
+        // vtable slot 5 — tx code 2
+        virtual int start(const sp<IMemory> &mem,
                           cacao::ISerialize::SerializedData sd) = 0;
-    // vtable slot 8 — tx code 5
-    virtual int getConfig(int configId, const sp<IMemory>& mem,
-                          cacao::ISerialize::SerializedData sd) = 0;
-    // vtable slot 9 — tx code 6
-    virtual int process(const sp<IMemory>& paramMem,
-                        cacao::ISerialize::SerializedData paramSd,
-                        Vector<cacao::ImageBuf*> bufs,
-                        const sp<IMemory>& resultMem,
-                        cacao::ISerialize::SerializedData resultSd,
-                        int flags,
-                        const sp<ICacaoProcessCallback>& callback) = 0;
-    // vtable slot 10 — tx code 7
-    virtual int process(const sp<IMemory>& paramMem,
-                        cacao::ISerialize::SerializedData paramSd,
-                        const sp<IBinder>& binder,
-                        const sp<IMemory>& resultMem,
-                        cacao::ISerialize::SerializedData resultSd,
-                        int flags,
-                        const sp<ICacaoProcessCallback>& callback) = 0;
-    // vtable slot 11 — tx code 8
-    virtual int cancel(int cookie) = 0;
-};
+        // vtable slot 6 — tx code 3
+        virtual int stop() = 0;
+        // vtable slot 7 — tx code 4
+        virtual int setConfig(int configId, const sp<IMemory> &mem,
+                              cacao::ISerialize::SerializedData sd) = 0;
+        // vtable slot 8 — tx code 5
+        virtual int getConfig(int configId, const sp<IMemory> &mem,
+                              cacao::ISerialize::SerializedData sd) = 0;
+        // vtable slot 9 — tx code 6
+        virtual int process(const sp<IMemory> &paramMem,
+                            cacao::ISerialize::SerializedData paramSd,
+                            Vector<cacao::ImageBuf *> bufs,
+                            const sp<IMemory> &resultMem,
+                            cacao::ISerialize::SerializedData resultSd,
+                            int flags,
+                            const sp<ICacaoProcessCallback> &callback) = 0;
+        // vtable slot 10 — tx code 7
+        virtual int process(const sp<IMemory> &paramMem,
+                            cacao::ISerialize::SerializedData paramSd,
+                            const sp<IBinder> &binder,
+                            const sp<IMemory> &resultMem,
+                            cacao::ISerialize::SerializedData resultSd,
+                            int flags,
+                            const sp<ICacaoProcessCallback> &callback) = 0;
+        // vtable slot 11 — tx code 8
+        virtual int cancel(int cookie) = 0;
+    };
 
-class BnCacao : public BnInterface<ICacao> {
-public:
-    virtual status_t onTransact(uint32_t code, const Parcel& data,
-                                Parcel* reply, uint32_t flags = 0);
-};
+    class BnCacao : public BnInterface<ICacao>
+    {
+    public:
+        virtual status_t onTransact(uint32_t code, const Parcel &data,
+                                    Parcel *reply, uint32_t flags = 0);
+    };
 
 } // namespace android

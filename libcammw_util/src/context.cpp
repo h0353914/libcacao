@@ -34,11 +34,12 @@
 // ---------------------------------------------------------------------
 // g_context：全域單例。
 
-struct cammw_util_context_t {
-  pthread_mutex_t mutex;              // +0x00
-  uint8_t reserved[0x20 - sizeof(pthread_mutex_t)];  // 佔位，未重新核對內容
-  hw_module_t *gralloc_module;         // +0x20
-  gralloc1_device_t *gralloc_device;   // +0x24
+struct cammw_util_context_t
+{
+  pthread_mutex_t mutex;                            // +0x00
+  uint8_t reserved[0x20 - sizeof(pthread_mutex_t)]; // 佔位，未重新核對內容
+  hw_module_t *gralloc_module;                      // +0x20
+  gralloc1_device_t *gralloc_device;                // +0x24
 };
 static_assert(offsetof(cammw_util_context_t, gralloc_module) == 0x20, "*(int*)((int)__mutex+0x20)");
 static_assert(offsetof(cammw_util_context_t, gralloc_device) == 0x24, "(int*)((int)__mutex+0x24)");
@@ -47,7 +48,8 @@ static cammw_util_context_t g_context_storage{};
 static cammw_util_context_t *g_context = &g_context_storage;
 static pthread_once_t g_init_once = PTHREAD_ONCE_INIT;
 
-extern "C" cammw_util_context_t *cammw_util_get_context(void) {
+extern "C" cammw_util_context_t *cammw_util_get_context(void)
+{
   return g_context;
 }
 
@@ -65,8 +67,10 @@ extern "C" cammw_util_context_t *cammw_util_get_context(void) {
 // 惰性載入」這個行為對得上，物理佈局不用逐位元組一致（這個 context
 // 不會被其他函式庫按 offset 硬解，跟 thread_context/msg_session_t 那種
 // 一定要位元組對齊的情況不一樣）。
-extern "C" int cammw_util_init(void) {
-  pthread_once(&g_init_once, [] { pthread_mutex_init(&g_context_storage.mutex, nullptr); });
+extern "C" int cammw_util_init(void)
+{
+  pthread_once(&g_init_once, []
+               { pthread_mutex_init(&g_context_storage.mutex, nullptr); });
   return 0;
 }
 
@@ -75,22 +79,23 @@ extern "C" int cammw_util_init(void) {
 // 同名符號靠 symbol interposition 共用同一份（這是先前 debug 找到的
 // 關鍵機制，見 README）。
 
-extern "C" {
-GRALLOC1_PFN_ALLOCATE g_allocate_func = nullptr;
-GRALLOC1_PFN_CREATE_DESCRIPTOR g_create_descriptor_func = nullptr;
-GRALLOC1_PFN_DESTROY_DESCRIPTOR g_destroy_descriptor_func = nullptr;
-GRALLOC1_PFN_GET_FORMAT g_get_format_func = nullptr;
-GRALLOC1_PFN_LOCK g_lock_func = nullptr;
-GRALLOC1_PFN_LOCK_FLEX g_lock_flex_func = nullptr;
-void *g_perform_func = nullptr;  // GRALLOC1_FUNCTION_PERFORM，重建版沒用到，占位保留符號
-GRALLOC1_PFN_RELEASE g_release_func = nullptr;
-GRALLOC1_PFN_RETAIN g_retain_func = nullptr;
-GRALLOC1_PFN_SET_CONSUMER_USAGE g_set_consumer_usage_func = nullptr;
-GRALLOC1_PFN_SET_DIMENSIONS g_set_dimensions_func = nullptr;
-GRALLOC1_PFN_SET_FORMAT g_set_format_func = nullptr;
-GRALLOC1_PFN_SET_PRODUCER_USAGE g_set_producer_usage_func = nullptr;
-GRALLOC1_PFN_GET_NUM_FLEX_PLANES g_get_num_flex_planes_func = nullptr;
-GRALLOC1_PFN_UNLOCK g_unlock_func = nullptr;
+extern "C"
+{
+  GRALLOC1_PFN_ALLOCATE g_allocate_func = nullptr;
+  GRALLOC1_PFN_CREATE_DESCRIPTOR g_create_descriptor_func = nullptr;
+  GRALLOC1_PFN_DESTROY_DESCRIPTOR g_destroy_descriptor_func = nullptr;
+  GRALLOC1_PFN_GET_FORMAT g_get_format_func = nullptr;
+  GRALLOC1_PFN_LOCK g_lock_func = nullptr;
+  GRALLOC1_PFN_LOCK_FLEX g_lock_flex_func = nullptr;
+  void *g_perform_func = nullptr; // GRALLOC1_FUNCTION_PERFORM，重建版沒用到，占位保留符號
+  GRALLOC1_PFN_RELEASE g_release_func = nullptr;
+  GRALLOC1_PFN_RETAIN g_retain_func = nullptr;
+  GRALLOC1_PFN_SET_CONSUMER_USAGE g_set_consumer_usage_func = nullptr;
+  GRALLOC1_PFN_SET_DIMENSIONS g_set_dimensions_func = nullptr;
+  GRALLOC1_PFN_SET_FORMAT g_set_format_func = nullptr;
+  GRALLOC1_PFN_SET_PRODUCER_USAGE g_set_producer_usage_func = nullptr;
+  GRALLOC1_PFN_GET_NUM_FLEX_PLANES g_get_num_flex_planes_func = nullptr;
+  GRALLOC1_PFN_UNLOCK g_unlock_func = nullptr;
 }
 
 extern "C" GRALLOC1_PFN_LOCK cammw_util_gralloc_lock_fn(void) { return g_lock_func; }
@@ -98,20 +103,27 @@ extern "C" GRALLOC1_PFN_LOCK_FLEX cammw_util_gralloc_lock_flex_fn(void) { return
 
 // 惰性初始化 gralloc1 module/device，把 15 個函式指標填好。
 // 對照 cammw_util_gralloc_alloc 內聯的那段（0x13a2c 附近）。
-extern "C" int cammw_util_get_gralloc1_dev(gralloc1_device_t **out_device) {
+extern "C" int cammw_util_get_gralloc1_dev(gralloc1_device_t **out_device)
+{
   pthread_mutex_lock(&g_context->mutex);
   int rc = 0;
-  if (g_context->gralloc_device == nullptr) {
+  if (g_context->gralloc_device == nullptr)
+  {
     const hw_module_t *module = g_context->gralloc_module;
-    if (module == nullptr) {
+    if (module == nullptr)
+    {
       int hw_rc = hw_get_module(GRALLOC_HARDWARE_MODULE_ID, &module);
-      if (hw_rc < 0) {
+      if (hw_rc < 0)
+      {
         ALOGE("E: %s: hw_get_module Failed", __FUNCTION__);
         rc = -0x6f;
-      } else {
+      }
+      else
+      {
         g_context->gralloc_module = const_cast<hw_module_t *>(module);
       }
-      if (module == nullptr) {
+      if (module == nullptr)
+      {
         ALOGE("E: %s: failed to load gralloc1 module %d", __FUNCTION__, hw_rc);
         pthread_mutex_unlock(&g_context->mutex);
         return -0x6f;
@@ -119,7 +131,8 @@ extern "C" int cammw_util_get_gralloc1_dev(gralloc1_device_t **out_device) {
     }
     hw_device_t *device = nullptr;
     int open_rc = module->methods->open(module, GRALLOC_HARDWARE_MODULE_ID, &device);
-    if (open_rc == 0 && device != nullptr) {
+    if (open_rc == 0 && device != nullptr)
+    {
       auto *dev = reinterpret_cast<gralloc1_device_t *>(device);
       g_allocate_func = reinterpret_cast<GRALLOC1_PFN_ALLOCATE>(
           dev->getFunction(dev, GRALLOC1_FUNCTION_ALLOCATE));
@@ -154,19 +167,24 @@ extern "C" int cammw_util_get_gralloc1_dev(gralloc1_device_t **out_device) {
           reinterpret_cast<GRALLOC1_PFN_UNLOCK>(dev->getFunction(dev, GRALLOC1_FUNCTION_UNLOCK));
       g_context->gralloc_device = dev;
       rc = 0;
-    } else {
+    }
+    else
+    {
       ALOGE("E: %s: failed to open gralloc1 device %d", __FUNCTION__, open_rc);
       rc = -0x6f;
     }
-    if (g_context->gralloc_device == nullptr && device != nullptr) {
+    if (g_context->gralloc_device == nullptr && device != nullptr)
+    {
       device->close(device);
     }
   }
   pthread_mutex_unlock(&g_context->mutex);
-  if (rc != 0) {
+  if (rc != 0)
+  {
     return rc;
   }
-  if (g_context->gralloc_device == nullptr) {
+  if (g_context->gralloc_device == nullptr)
+  {
     ALOGE("E: %s: no gralloc1 device", __FUNCTION__);
     return -0x6f;
   }
@@ -178,15 +196,18 @@ extern "C" int cammw_util_get_gralloc1_dev(gralloc1_device_t **out_device) {
 // event（一個 mutex + cond + flag + code，跟 cammw_util_thread_context
 // 一樣是個小型同步原語，供 msg 以外的地方用）。
 
-struct cammw_event_t {
+struct cammw_event_t
+{
   pthread_mutex_t mutex;
   pthread_cond_t cond;
   uint8_t signaled;
   int code;
 };
 
-extern "C" int cammw_util_event_init(cammw_event_t *ev) {
-  if (ev == nullptr) {
+extern "C" int cammw_util_event_init(cammw_event_t *ev)
+{
+  if (ev == nullptr)
+  {
     return CAMMW_ERR_INVALID_ARG;
   }
   pthread_mutex_init(&ev->mutex, nullptr);
@@ -196,8 +217,10 @@ extern "C" int cammw_util_event_init(cammw_event_t *ev) {
   return 0;
 }
 
-extern "C" int cammw_util_event_deinit(cammw_event_t *ev) {
-  if (ev == nullptr) {
+extern "C" int cammw_util_event_deinit(cammw_event_t *ev)
+{
+  if (ev == nullptr)
+  {
     return CAMMW_ERR_INVALID_ARG;
   }
   pthread_cond_destroy(&ev->cond);
@@ -206,23 +229,31 @@ extern "C" int cammw_util_event_deinit(cammw_event_t *ev) {
 }
 
 // 對照 decompiled.c @ 0x151ec，逐字轉譯（timeout_ms==0 -> 無限等）。
-extern "C" int cammw_util_event_wait(cammw_event_t *ev, uint32_t timeout_ms) {
-  if (ev == nullptr) {
+extern "C" int cammw_util_event_wait(cammw_event_t *ev, uint32_t timeout_ms)
+{
+  if (ev == nullptr)
+  {
     return 0xffffff99;
   }
   pthread_mutex_lock(&ev->mutex);
   int rc = 0;
-  if (!ev->signaled) {
-    do {
-      if (timeout_ms == 0) {
+  if (!ev->signaled)
+  {
+    do
+    {
+      if (timeout_ms == 0)
+      {
         pthread_cond_wait(&ev->cond, &ev->mutex);
-      } else {
+      }
+      else
+      {
         timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
         ts.tv_sec += timeout_ms / 1000;
         ts.tv_nsec += (timeout_ms % 1000) * 1000000;
         int wait_rc = pthread_cond_timedwait(&ev->cond, &ev->mutex, &ts);
-        if (wait_rc != 0) {
+        if (wait_rc != 0)
+        {
           ALOGE("E: %s: timeout rc = %d", __FUNCTION__, wait_rc);
           rc = 0xffffff92;
           goto done;
@@ -241,9 +272,11 @@ done:
 // ---------------------------------------------------------------------
 // mmap/munmap 包一層 log。對照 decompiled.c @ 0x15e18 / 0x15e78，逐字轉譯。
 
-extern "C" int cammw_util_mmap(int fd, uint32_t size, uint8_t **out_addr) {
+extern "C" int cammw_util_mmap(int fd, uint32_t size, uint8_t **out_addr)
+{
   void *addr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  if (addr == MAP_FAILED) {
+  if (addr == MAP_FAILED)
+  {
     ALOGE("E: %s: failed: fd=%d, size=%zu, e=%d %s", __FUNCTION__, fd, static_cast<size_t>(size),
           errno, strerror(errno));
     return 0xffffff97;
@@ -252,8 +285,10 @@ extern "C" int cammw_util_mmap(int fd, uint32_t size, uint8_t **out_addr) {
   return 0;
 }
 
-extern "C" int cammw_util_munmap(uint8_t *addr, uint32_t size) {
-  if (munmap(addr, size) == 0) {
+extern "C" int cammw_util_munmap(uint8_t *addr, uint32_t size)
+{
+  if (munmap(addr, size) == 0)
+  {
     return 0;
   }
   ALOGE("E: %s: failed: addr=%p, size=%zu %d %s", __FUNCTION__, addr, static_cast<size_t>(size),
@@ -272,17 +307,20 @@ extern "C" int cammw_util_munmap(uint8_t *addr, uint32_t size) {
 
 static int64_t g_boottime_to_monotonic_offset_ns = 0;
 
-namespace {
-int64_t timespec_to_ns(const timespec &ts) {
-  return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
-}
-}  // namespace
+namespace
+{
+  int64_t timespec_to_ns(const timespec &ts)
+  {
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + ts.tv_nsec;
+  }
+} // namespace
 
 // 簡化版：原版取樣 5~6 次找抖動最小的一組，這裡只取一次。BOOTTIME 跟
 // MONOTONIC 的差值本來就應該是穩定值（機器沒有 suspend/resume 就不會
 // 變），多次取樣主要是為了避開系統呼叫本身的排程抖動，對最終結果影響
 // 通常在微秒等級，這裡先簡化，需要的話之後再補多次採樣版本。
-extern "C" void cammw_util_init_diff_timespec(void) {
+extern "C" void cammw_util_init_diff_timespec(void)
+{
   timespec boot_a{}, mono{}, boot_b{};
   clock_gettime(CLOCK_BOOTTIME, &boot_a);
   clock_gettime(CLOCK_MONOTONIC, &mono);
@@ -291,8 +329,10 @@ extern "C" void cammw_util_init_diff_timespec(void) {
   g_boottime_to_monotonic_offset_ns = timespec_to_ns(mono) - boot_mid;
 }
 
-extern "C" int cammw_util_convert_boottime_to_monotonic(uint32_t nsec, int32_t sec, int32_t *out) {
-  if (out == nullptr) {
+extern "C" int cammw_util_convert_boottime_to_monotonic(uint32_t nsec, int32_t sec, int32_t *out)
+{
+  if (out == nullptr)
+  {
     ALOGE("E: %s: Invalid arg", __FUNCTION__);
     return 0xffffff99;
   }
@@ -308,8 +348,10 @@ extern "C" int cammw_util_convert_boottime_to_monotonic(uint32_t nsec, int32_t s
   return 0;
 }
 
-extern "C" int cammw_util_convert_realtime_to_monotonic(uint32_t nsec, int32_t sec, int32_t *out) {
-  if (out == nullptr) {
+extern "C" int cammw_util_convert_realtime_to_monotonic(uint32_t nsec, int32_t sec, int32_t *out)
+{
+  if (out == nullptr)
+  {
     ALOGE("E: %s: Invalid arg", __FUNCTION__);
     return 0xffffff99;
   }
@@ -323,13 +365,22 @@ extern "C" int cammw_util_convert_realtime_to_monotonic(uint32_t nsec, int32_t s
   return 0;
 }
 
-extern "C" int64_t cammw_util_get_timestamp(int clock_type) {
+extern "C" int64_t cammw_util_get_timestamp(int clock_type)
+{
   clockid_t id;
-  switch (clock_type) {
-    case 0: id = CLOCK_REALTIME; break;
-    case 1: id = CLOCK_MONOTONIC; break;
-    case 2: id = CLOCK_BOOTTIME; break;
-    default: return 0;
+  switch (clock_type)
+  {
+  case 0:
+    id = CLOCK_REALTIME;
+    break;
+  case 1:
+    id = CLOCK_MONOTONIC;
+    break;
+  case 2:
+    id = CLOCK_BOOTTIME;
+    break;
+  default:
+    return 0;
   }
   timespec ts{};
   clock_gettime(id, &ts);
@@ -341,23 +392,28 @@ extern "C" int64_t cammw_util_get_timestamp(int clock_type) {
 extern "C" void cammw_util_get_thermal_camera_info(void) {}
 
 // 對照 decompiled.c @ 0x15444，逐字轉譯。
-extern "C" void cammw_util_set_thermal(int zone_id, int32_t value) {
+extern "C" void cammw_util_set_thermal(int zone_id, int32_t value)
+{
   char path[108];
   snprintf(path, sizeof(path), "sys/devices/sony_camera_%d/info", zone_id);
   int fd = open(path, O_WRONLY);
-  if (fd < 0) {
+  if (fd < 0)
+  {
     ALOGE("E: %s: open error %d", __FUNCTION__, zone_id);
     return;
   }
   ssize_t n = write(fd, &value, sizeof(value));
-  if (n != sizeof(value)) {
+  if (n != sizeof(value))
+  {
     ALOGE("E: %s: write size err %zd", __FUNCTION__, n);
   }
   close(fd);
 }
 
-extern "C" int cammw_util_event_notify(cammw_event_t *ev, int code) {
-  if (ev == nullptr) {
+extern "C" int cammw_util_event_notify(cammw_event_t *ev, int code)
+{
+  if (ev == nullptr)
+  {
     return 0xffffff99;
   }
   pthread_mutex_lock(&ev->mutex);

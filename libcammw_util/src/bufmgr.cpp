@@ -32,10 +32,11 @@
 // 上限來自 bufmgr_open 的 `buffer_count < 0xb` 檢查。
 #define CAMMW_BUFMGR_MAX_BUFFERS 10
 
-struct cammw_util_buffer_manager_t {
-  uint32_t buffer_count;                                          // +0x000
-  cammw_util_image_buffer_t buffer_info[CAMMW_BUFMGR_MAX_BUFFERS];// +0x004
-  pthread_mutex_t buffer_mutex;                                   // +0x0f4
+struct cammw_util_buffer_manager_t
+{
+  uint32_t buffer_count;                                           // +0x000
+  cammw_util_image_buffer_t buffer_info[CAMMW_BUFMGR_MAX_BUFFERS]; // +0x004
+  pthread_mutex_t buffer_mutex;                                    // +0x0f4
   // bionic 的 pthread_mutex_t 在 32-bit 只有 4 bytes，但機器碼顯示鎖旗標
   // 在 +0xfc，中間空著 4 bytes。bufmgr_init 有一次「清 8 bytes」的動作
   // （`*(undefined8 *)((int)&mutex + 4) = 0`）正好蓋住這一格加旗標開頭，
@@ -43,8 +44,8 @@ struct cammw_util_buffer_manager_t {
   // **不是保留欄位**：bufmgr_lock_buf 拿它當 round-robin 配置游標
   // （0x1509e ldr.w r5,[r6,#0xf8] / 0x150b0 str.w r2,[r6,#0xf8]），
   // bufmgr_open 會把它歸零（0x15038 str.w r9,[r6,#0xf8]）。
-  uint32_t alloc_cursor;                                          // +0x0f8
-  uint8_t lock_flags[CAMMW_BUFMGR_MAX_BUFFERS];                   // +0x0fc
+  uint32_t alloc_cursor;                        // +0x0f8
+  uint8_t lock_flags[CAMMW_BUFMGR_MAX_BUFFERS]; // +0x0fc
 };
 
 // 這幾個偏移全部來自機器碼，不是推測 —— 見檔案開頭的反組譯。
@@ -65,8 +66,10 @@ extern "C" int cammw_util_shmem_import_buf(int import_context, uint32_t import_a
                                            cammw_util_image_buffer_t *out);
 extern "C" int cammw_util_shmem_free_buf(cammw_util_image_buffer_t *buffer);
 
-extern "C" int cammw_util_bufmgr_init(cammw_util_buffer_manager_t *mgr) {
-  if (mgr == nullptr) {
+extern "C" int cammw_util_bufmgr_init(cammw_util_buffer_manager_t *mgr)
+{
+  if (mgr == nullptr)
+  {
     return CAMMW_ERR_INVALID_ARG;
   }
   mgr->buffer_count = 0;
@@ -79,16 +82,19 @@ extern "C" int cammw_util_bufmgr_init(cammw_util_buffer_manager_t *mgr) {
 
 extern "C" int cammw_util_bufmgr_open(cammw_util_buffer_manager_t *mgr, uint32_t buffer_count,
                                       uint32_t import_arg, int import_context,
-                                      const int *input_fds) {
-  if (mgr == nullptr || buffer_count > CAMMW_BUFMGR_MAX_BUFFERS) {
+                                      const int *input_fds)
+{
+  if (mgr == nullptr || buffer_count > CAMMW_BUFMGR_MAX_BUFFERS)
+  {
     return CAMMW_ERR_INVALID_ARG;
   }
 
   pthread_mutex_lock(&mgr->buffer_mutex);
   mgr->buffer_count = buffer_count;
-  mgr->alloc_cursor = 0;  // 0x15038 str.w r9,[r6,#0xf8]
+  mgr->alloc_cursor = 0; // 0x15038 str.w r9,[r6,#0xf8]
 
-  for (uint32_t i = 0; i < buffer_count; ++i) {
+  for (uint32_t i = 0; i < buffer_count; ++i)
+  {
     cammw_util_shmem_import_buf(import_context, import_arg, input_fds[i], &mgr->buffer_info[i]);
     mgr->lock_flags[i] = 0;
     // 原版在 import 之後就把傳進來的 fd 關掉 —— import 內部已經 dup 過。
@@ -128,8 +134,10 @@ extern "C" int cammw_util_bufmgr_open(cammw_util_buffer_manager_t *mgr, uint32_t
 // 就是這樣來的。
 extern "C" int cammw_util_bufmgr_lock_buf(cammw_util_buffer_manager_t *mgr, uint32_t index,
                                           uint32_t *out_index,
-                                          cammw_util_image_buffer_t *out_buffer) {
-  if (mgr == nullptr) {
+                                          cammw_util_image_buffer_t *out_buffer)
+{
+  if (mgr == nullptr)
+  {
     return CAMMW_ERR_INVALID_ARG;
   }
 
@@ -140,17 +148,22 @@ extern "C" int cammw_util_bufmgr_lock_buf(cammw_util_buffer_manager_t *mgr, uint
   uint32_t chosen = 0;
   bool found = false;
 
-  if (out_index != nullptr) {
+  if (out_index != nullptr)
+  {
     // 自動配置：從游標開始繞一圈找空位。
-    if (count != 0) {
+    if (count != 0)
+    {
       uint32_t cursor = mgr->alloc_cursor;
-      for (uint32_t tried = 0; tried < count; ++tried) {
+      for (uint32_t tried = 0; tried < count; ++tried)
+      {
         uint32_t next = cursor + 1;
-        if (next >= count) {
+        if (next >= count)
+        {
           next = 0;
         }
         mgr->alloc_cursor = next;
-        if (mgr->lock_flags[cursor] == 0) {
+        if (mgr->lock_flags[cursor] == 0)
+        {
           chosen = cursor;
           found = true;
           *out_index = cursor;
@@ -159,17 +172,22 @@ extern "C" int cammw_util_bufmgr_lock_buf(cammw_util_buffer_manager_t *mgr, uint
         cursor = next;
       }
     }
-  } else {
+  }
+  else
+  {
     // 指定索引：必須在範圍內且尚未被鎖。
-    if (index < count && mgr->lock_flags[index] == 0) {
+    if (index < count && mgr->lock_flags[index] == 0)
+    {
       chosen = index;
       found = true;
     }
   }
 
-  if (found) {
-    if (out_buffer != nullptr) {
-      *out_buffer = mgr->buffer_info[chosen];  // 整個 24-byte 描述子
+  if (found)
+  {
+    if (out_buffer != nullptr)
+    {
+      *out_buffer = mgr->buffer_info[chosen]; // 整個 24-byte 描述子
     }
     mgr->lock_flags[chosen] = 1;
     status = 0;
@@ -179,30 +197,38 @@ extern "C" int cammw_util_bufmgr_lock_buf(cammw_util_buffer_manager_t *mgr, uint
   return status;
 }
 
-extern "C" int cammw_util_bufmgr_unlock_buf(cammw_util_buffer_manager_t *mgr, uint32_t index) {
-  if (mgr == nullptr) {
+extern "C" int cammw_util_bufmgr_unlock_buf(cammw_util_buffer_manager_t *mgr, uint32_t index)
+{
+  if (mgr == nullptr)
+  {
     return CAMMW_ERR_INVALID_ARG;
   }
 
   pthread_mutex_lock(&mgr->buffer_mutex);
   int status;
-  if (index < mgr->buffer_count) {
+  if (index < mgr->buffer_count)
+  {
     mgr->lock_flags[index] = 0;
     status = 0;
-  } else {
+  }
+  else
+  {
     status = CAMMW_ERR_INVALID_ARG;
   }
   pthread_mutex_unlock(&mgr->buffer_mutex);
   return status;
 }
 
-extern "C" int cammw_util_bufmgr_deinit(cammw_util_buffer_manager_t *mgr) {
-  if (mgr == nullptr) {
+extern "C" int cammw_util_bufmgr_deinit(cammw_util_buffer_manager_t *mgr)
+{
+  if (mgr == nullptr)
+  {
     return CAMMW_ERR_INVALID_ARG;
   }
 
   pthread_mutex_lock(&mgr->buffer_mutex);
-  for (uint32_t i = 0; i < mgr->buffer_count; ++i) {
+  for (uint32_t i = 0; i < mgr->buffer_count; ++i)
+  {
     cammw_util_shmem_free_buf(&mgr->buffer_info[i]);
   }
   mgr->buffer_count = 0;

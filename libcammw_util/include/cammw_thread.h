@@ -12,19 +12,20 @@
 
 constexpr size_t kCammwThreadNameSize = 0x40;
 
-struct cammw_thread_context {
-  uint8_t external_shutdown_enabled;  // +0x00
-  uint8_t reserved_01[3];             // +0x01
-  pthread_t thread_handle;            // +0x04
-  uint8_t thread_started;             // +0x08
-  char thread_name[kCammwThreadNameSize];  // +0x09  "cammw:%s"
-  uint8_t reserved_49[0x4c - 0x49];   // +0x49
-  int priority;                       // +0x4c  clamp(requested, 100, 139)
-  int control_read_fd;                // +0x50
-  int control_write_fd;               // +0x54
-  int thread_id;                      // +0x58  gettid()
-  int (*thread_routine)(void *);      // +0x5c
-  void *thread_argument;              // +0x60
+struct cammw_thread_context
+{
+  uint8_t external_shutdown_enabled;      // +0x00
+  uint8_t reserved_01[3];                 // +0x01
+  pthread_t thread_handle;                // +0x04
+  uint8_t thread_started;                 // +0x08
+  char thread_name[kCammwThreadNameSize]; // +0x09  "cammw:%s"
+  uint8_t reserved_49[0x4c - 0x49];       // +0x49
+  int priority;                           // +0x4c  clamp(requested, 100, 139)
+  int control_read_fd;                    // +0x50
+  int control_write_fd;                   // +0x54
+  int thread_id;                          // +0x58  gettid()
+  int (*thread_routine)(void *);          // +0x5c
+  void *thread_argument;                  // +0x60
 };
 
 static_assert(sizeof(cammw_thread_context) == 0x64, "跟 msg_server_context/msg_session_t 內嵌大小對得上");

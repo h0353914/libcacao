@@ -52,23 +52,25 @@ extern "C" cammw_util_context_t *cammw_util_get_context(void);
 extern "C" GRALLOC1_PFN_LOCK cammw_util_gralloc_lock_fn(void);
 extern "C" GRALLOC1_PFN_LOCK_FLEX cammw_util_gralloc_lock_flex_fn(void);
 
-namespace {
+namespace
+{
 
-// 註冊表的 entry。16 bytes（register 的 `calloc(1,0x10)`）。
-// 欄位語意來自 unregister：它把 handle 與 mapped size 抄回輸出結構。
-struct DescriptorEntry {
-  int fd;                     // +0x00  查表的鍵（呼叫端傳進來的 output->fd）
-  int reserved;               // +0x04  對齊用（下面的 u64 要 8-byte 對齊）
-  unsigned long long descriptor;  // +0x08  gralloc1 的 64-bit descriptor
-};
+  // 註冊表的 entry。16 bytes（register 的 `calloc(1,0x10)`）。
+  // 欄位語意來自 unregister：它把 handle 與 mapped size 抄回輸出結構。
+  struct DescriptorEntry
+  {
+    int fd;                        // +0x00  查表的鍵（呼叫端傳進來的 output->fd）
+    int reserved;                  // +0x04  對齊用（下面的 u64 要 8-byte 對齊）
+    unsigned long long descriptor; // +0x08  gralloc1 的 64-bit descriptor
+  };
 
-static_assert(sizeof(DescriptorEntry) == 0x10, "register 的 calloc(1, 0x10)");
+  static_assert(sizeof(DescriptorEntry) == 0x10, "register 的 calloc(1, 0x10)");
 
-// 全域註冊表。原版把它內嵌在 context +0x04（那三個 vtable 之一），
-// 這裡用獨立的 C++ 物件 —— 重建版不需要複製內嵌佈局，只要行為等價。
-cammw::PtrLockList g_descriptor_list;
+  // 全域註冊表。原版把它內嵌在 context +0x04（那三個 vtable 之一），
+  // 這裡用獨立的 C++ 物件 —— 重建版不需要複製內嵌佈局，只要行為等價。
+  cammw::PtrLockList g_descriptor_list;
 
-}  // namespace
+} // namespace
 
 // 把一組 fd/descriptor 記進表裡。已經存在就不重複加。
 //
@@ -78,9 +80,11 @@ cammw::PtrLockList g_descriptor_list;
 // 簽名照原廠：第一個參數是 **int fd**（呼叫端傳 output->fd），第二個是
 // 64-bit 的 gralloc1 descriptor。刻意**不用** extern "C"，這樣才會 mangle
 // 成 _Z39cammw_util_gralloc1_add_descriptor_listiy 跟 libcammw.so 對得上。
-int cammw_util_gralloc1_add_descriptor_list(int fd, unsigned long long descriptor) {
+int cammw_util_gralloc1_add_descriptor_list(int fd, unsigned long long descriptor)
+{
   auto *entry = static_cast<DescriptorEntry *>(calloc(1, sizeof(DescriptorEntry)));
-  if (entry == nullptr) {
+  if (entry == nullptr)
+  {
     // 原版這裡回 -0x66（跟其他錯誤碼不同，專指配置失敗）。
     return -0x66;
   }
@@ -89,16 +93,19 @@ int cammw_util_gralloc1_add_descriptor_list(int fd, unsigned long long descripto
   entry->descriptor = descriptor;
 
   // 已經註冊過就不重複加 —— 原版走訪整串比對 fd。
-  for (uint32_t i = 0; i < g_descriptor_list.count(); ++i) {
+  for (uint32_t i = 0; i < g_descriptor_list.count(); ++i)
+  {
     auto *existing = static_cast<DescriptorEntry *>(g_descriptor_list.get(i));
-    if (existing != nullptr && existing->fd == fd) {
+    if (existing != nullptr && existing->fd == fd)
+    {
       free(entry);
       return 0;
     }
   }
 
   auto *node = static_cast<cammw::PtrListNode *>(calloc(1, sizeof(cammw::PtrListNode)));
-  if (node == nullptr) {
+  if (node == nullptr)
+  {
     free(entry);
     return -0x66;
   }
@@ -109,24 +116,30 @@ int cammw_util_gralloc1_add_descriptor_list(int fd, unsigned long long descripto
 
 // 從表裡依 fd 取出並移除，把 descriptor 抄回呼叫端。
 // 同樣是 C++ linkage，mangle 成 _Z39cammw_util_gralloc1_del_descriptor_listiPy。
-int cammw_util_gralloc1_del_descriptor_list(int fd, unsigned long long *out_descriptor) {
+int cammw_util_gralloc1_del_descriptor_list(int fd, unsigned long long *out_descriptor)
+{
   cammw_util_context_t *context = cammw_util_get_context();
-  if (context == nullptr) {
+  if (context == nullptr)
+  {
     ALOGE("%s: no util resource", __FUNCTION__);
     return CAMMW_ERR_INVALID_ARG;
   }
 
-  for (uint32_t i = 0; i < g_descriptor_list.count(); ++i) {
+  for (uint32_t i = 0; i < g_descriptor_list.count(); ++i)
+  {
     auto *node = g_descriptor_list.getNode(i);
-    if (node == nullptr) {
+    if (node == nullptr)
+    {
       continue;
     }
     auto *entry = static_cast<DescriptorEntry *>(node->payload);
-    if (entry == nullptr || entry->fd != fd) {
+    if (entry == nullptr || entry->fd != fd)
+    {
       continue;
     }
 
-    if (out_descriptor != nullptr) {
+    if (out_descriptor != nullptr)
+    {
       *out_descriptor = entry->descriptor;
     }
     g_descriptor_list.remove(node);
@@ -172,8 +185,10 @@ int cammw_util_gralloc1_del_descriptor_list(int fd, unsigned long long *out_desc
 extern "C" int cammw_util_gralloc_make_buf_from_private_handle(
     const void *gralloc_device, const int *attribute_values, int width, int height,
     int pixel_format, uint32_t usage_or_color_space, const private_handle_t *handle,
-    uint8_t populate_metadata, cammw_buf_t *out) {
-  if (gralloc_device == nullptr || handle == nullptr || out == nullptr) {
+    uint8_t populate_metadata, cammw_buf_t *out)
+{
+  if (gralloc_device == nullptr || handle == nullptr || out == nullptr)
+  {
     ALOGE("E: %s: Invalid Arg", "cammw_util_gralloc_make_buf_from_private_handle");
     return CAMMW_ERR_INVALID_ARG;
   }
@@ -185,22 +200,26 @@ extern "C" int cammw_util_gralloc_make_buf_from_private_handle(
   int y_top_left = 0;
   int cb_top_left = 0;
   int cr_top_left = 0;
-  int v_increment = 0;  // 兩個 2/4 分支共用（見上面註解）
+  int v_increment = 0; // 兩個 2/4 分支共用（見上面註解）
   const int *attrs = attribute_values;
 
   int rc;
-  if ((handle->format | 4) == 0x25) {
+  if ((handle->format | 4) == 0x25)
+  {
     void *mapped = nullptr;
     const gralloc1_rect_t rect = {0, 0, width, height};
     GRALLOC1_PFN_LOCK lock = cammw_util_gralloc_lock_fn();
     rc = lock == nullptr ? GRALLOC1_ERROR_UNSUPPORTED
-                          : lock(device, gralloc_handle, kProducerUsage, 0, &rect, &mapped, -1);
-    if (rc != GRALLOC1_ERROR_NONE) {
+                         : lock(device, gralloc_handle, kProducerUsage, 0, &rect, &mapped, -1);
+    if (rc != GRALLOC1_ERROR_NONE)
+    {
       ALOGE("E: %s: gralloc1_lock failed, err %d",
             "cammw_util_gralloc_make_buf_from_private_handle", rc);
       return CAMMW_ERR_FAILED;
     }
-  } else {
+  }
+  else
+  {
     // gralloc 的 BufferManager::GetFlexLayout() 會無條件往 layout->planes[0..2]
     // 寫，自己完全不配置記憶體，所以呼叫端必須先備好至少 3 個 plane 的陣列。
     // 之前這裡只寫 `android_flex_layout flex{}`，planes 是 NULL——實機直接崩在
@@ -214,18 +233,25 @@ extern "C" int cammw_util_gralloc_make_buf_from_private_handle(
     rc = lock_flex == nullptr
              ? GRALLOC1_ERROR_UNSUPPORTED
              : lock_flex(device, gralloc_handle, kProducerUsage, 0, &rect, &flex, -1);
-    if (rc != GRALLOC1_ERROR_NONE) {
+    if (rc != GRALLOC1_ERROR_NONE)
+    {
       ALOGE("E: %s: gralloc1_lock_flex_failed", "cammw_util_gralloc_make_buf_from_private_handle");
       return CAMMW_ERR_FAILED;
     }
-    for (int i = 0; i < 3 && i < static_cast<int>(flex.num_planes); ++i) {
+    for (int i = 0; i < 3 && i < static_cast<int>(flex.num_planes); ++i)
+    {
       const android_flex_plane_t &plane = flex.planes[i];
-      if (plane.component == FLEX_COMPONENT_Y) {
+      if (plane.component == FLEX_COMPONENT_Y)
+      {
         y_top_left = static_cast<int>(reinterpret_cast<intptr_t>(plane.top_left));
-      } else if (plane.component == FLEX_COMPONENT_Cb) {
+      }
+      else if (plane.component == FLEX_COMPONENT_Cb)
+      {
         cb_top_left = static_cast<int>(reinterpret_cast<intptr_t>(plane.top_left));
         v_increment = plane.v_increment;
-      } else if (plane.component == FLEX_COMPONENT_Cr) {
+      }
+      else if (plane.component == FLEX_COMPONENT_Cr)
+      {
         cr_top_left = static_cast<int>(reinterpret_cast<intptr_t>(plane.top_left));
         v_increment = plane.v_increment;
       }
@@ -239,7 +265,8 @@ extern "C" int cammw_util_gralloc_make_buf_from_private_handle(
   out->w[kCammwBufPrivHandle] = reinterpret_cast<intptr_t>(handle);
   out->w[kCammwBufAttrPtr] = reinterpret_cast<intptr_t>(attrs);
 
-  if (populate_metadata == 0) {
+  if (populate_metadata == 0)
+  {
     return 0;
   }
 
@@ -254,9 +281,12 @@ extern "C" int cammw_util_gralloc_make_buf_from_private_handle(
   out->w[kCammwBufVStride] = handle->height;
   out->w[kCammwBufUsageOrColorSpace] = static_cast<int32_t>(usage_or_color_space);
   out->w[0xf] = 0;
-  out->w[0x14] = 0; out->w[0x15] = 0;
-  out->w[0x16] = 0; out->w[0x17] = 0;
-  out->w[0x18] = 0; out->w[0x19] = 0;
+  out->w[0x14] = 0;
+  out->w[0x15] = 0;
+  out->w[0x16] = 0;
+  out->w[0x17] = 0;
+  out->w[0x18] = 0;
+  out->w[0x19] = 0;
   out->w[kCammwBufWidth2] = width;
   out->w[kCammwBufHeight2] = height;
   out->w[kCammwBufImageSize] = handle_size - handle_offset;
@@ -272,57 +302,59 @@ extern "C" int cammw_util_gralloc_make_buf_from_private_handle(
   // 是哪個 goto target，方便之後對照。
   const int32_t d_cb = cb_top_left - y_top_left;
   const int32_t d_cr = cr_top_left - y_top_left;
-  switch (fmt) {
-    case 0x10:  // -> LAB_00014df6（跟 0x10b 共用）
-      out->w[kCammwBufPlaneOffset1] = d_cb;
-      out->w[kCammwBufImageSize] = v_stride * v_increment + d_cb;
-      break;
-    // LAB_00014db2 的共用收尾是
-    //   param_9[10] = iVar4;                                   // plane_offset1
-    //   param_9[0x13] = iVar4 + ((piVar8 * param_9[0xd]) >> 1) // image_size
-    // 其中 piVar8 是 v_increment、param_9[0xd] 是 v_stride。之前這三支
-    // （0x11 / 0x109+0x7fa30c04 / 0x113）誤寫成 stride * v_stride。
-    case 0x11:  // -> LAB_00014d96 -> LAB_00014db2（跟 0x113 共用）
-      out->w[kCammwBufPlaneOffset1] = d_cr;
-      out->w[kCammwBufImageSize] = d_cr + ((v_increment * v_stride) >> 1);
-      break;
-    case 0x21:  // 只有 usage==0x80000 才動，其餘什麼都不做
-      if (usage_or_color_space == 0x80000) {
-        const uint32_t aligned_w = (static_cast<uint32_t>(width) + 0x1f) & ~0x1fu;
-        const int32_t old_stride = out->w[kCammwBufStride];
-        out->w[kCammwBufVStride] = old_stride / static_cast<int32_t>(aligned_w);
-        out->w[kCammwBufStride] = static_cast<int32_t>(aligned_w);
-      }
-      break;
-    case 0x25:
-      out->w[kCammwBufStride] = static_cast<int32_t>((static_cast<uint32_t>(width) + 1) & ~1u);
-      out->w[kCammwBufVStride] = static_cast<int32_t>((static_cast<uint32_t>(height) + 1) & ~1u);
-      break;
-    case 0x102:
-      out->w[kCammwBufPlaneOffset1] = d_cb;
-      break;
-    case 0x109:      // 落到 fmt<0x109 判斷之外，直接 fallthrough 到共用尾段
-    case 0x7fa30c04:  // 同上，跟 0x109 共用同一段收尾
-      out->w[kCammwBufPlaneOffset1] = d_cb;
-      out->w[kCammwBufImageSize] = d_cb + ((v_increment * v_stride) >> 1);
-      break;
-    case 0x10b:  // -> LAB_00014df6（跟 0x10 共用）
-      out->w[kCammwBufPlaneOffset1] = d_cr;
-      out->w[kCammwBufImageSize] = v_stride * v_increment + d_cr;
-      break;
-    case 0x113:  // -> LAB_00014d96（跟 0x11 共用）
-      out->w[kCammwBufPlaneOffset1] = d_cr;
-      out->w[kCammwBufImageSize] = d_cr + ((v_increment * v_stride) >> 1);
-      break;
-    case 0x32315659:  // 'YV12'
-      out->w[kCammwBufPlaneOffset1] = d_cb;
-      out->w[kCammwBufPlaneOffset2] = d_cr;
-      out->w[kCammwBufImageSize] = d_cb + ((v_increment * v_stride) >> 1);
-      break;
-    default:
-      // 其餘沒列到的格式：原版在最外層 if/else 找不到分支就直接
-      // goto LAB_00014e08（DONE），完全不碰 plane/size 欄位。
-      break;
+  switch (fmt)
+  {
+  case 0x10: // -> LAB_00014df6（跟 0x10b 共用）
+    out->w[kCammwBufPlaneOffset1] = d_cb;
+    out->w[kCammwBufImageSize] = v_stride * v_increment + d_cb;
+    break;
+  // LAB_00014db2 的共用收尾是
+  //   param_9[10] = iVar4;                                   // plane_offset1
+  //   param_9[0x13] = iVar4 + ((piVar8 * param_9[0xd]) >> 1) // image_size
+  // 其中 piVar8 是 v_increment、param_9[0xd] 是 v_stride。之前這三支
+  // （0x11 / 0x109+0x7fa30c04 / 0x113）誤寫成 stride * v_stride。
+  case 0x11: // -> LAB_00014d96 -> LAB_00014db2（跟 0x113 共用）
+    out->w[kCammwBufPlaneOffset1] = d_cr;
+    out->w[kCammwBufImageSize] = d_cr + ((v_increment * v_stride) >> 1);
+    break;
+  case 0x21: // 只有 usage==0x80000 才動，其餘什麼都不做
+    if (usage_or_color_space == 0x80000)
+    {
+      const uint32_t aligned_w = (static_cast<uint32_t>(width) + 0x1f) & ~0x1fu;
+      const int32_t old_stride = out->w[kCammwBufStride];
+      out->w[kCammwBufVStride] = old_stride / static_cast<int32_t>(aligned_w);
+      out->w[kCammwBufStride] = static_cast<int32_t>(aligned_w);
+    }
+    break;
+  case 0x25:
+    out->w[kCammwBufStride] = static_cast<int32_t>((static_cast<uint32_t>(width) + 1) & ~1u);
+    out->w[kCammwBufVStride] = static_cast<int32_t>((static_cast<uint32_t>(height) + 1) & ~1u);
+    break;
+  case 0x102:
+    out->w[kCammwBufPlaneOffset1] = d_cb;
+    break;
+  case 0x109:      // 落到 fmt<0x109 判斷之外，直接 fallthrough 到共用尾段
+  case 0x7fa30c04: // 同上，跟 0x109 共用同一段收尾
+    out->w[kCammwBufPlaneOffset1] = d_cb;
+    out->w[kCammwBufImageSize] = d_cb + ((v_increment * v_stride) >> 1);
+    break;
+  case 0x10b: // -> LAB_00014df6（跟 0x10 共用）
+    out->w[kCammwBufPlaneOffset1] = d_cr;
+    out->w[kCammwBufImageSize] = v_stride * v_increment + d_cr;
+    break;
+  case 0x113: // -> LAB_00014d96（跟 0x11 共用）
+    out->w[kCammwBufPlaneOffset1] = d_cr;
+    out->w[kCammwBufImageSize] = d_cr + ((v_increment * v_stride) >> 1);
+    break;
+  case 0x32315659: // 'YV12'
+    out->w[kCammwBufPlaneOffset1] = d_cb;
+    out->w[kCammwBufPlaneOffset2] = d_cr;
+    out->w[kCammwBufImageSize] = d_cb + ((v_increment * v_stride) >> 1);
+    break;
+  default:
+    // 其餘沒列到的格式：原版在最外層 if/else 找不到分支就直接
+    // goto LAB_00014e08（DONE），完全不碰 plane/size 欄位。
+    break;
   }
   return 0;
 }

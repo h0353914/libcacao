@@ -14,89 +14,109 @@
 #include <pthread.h>
 #include <stdlib.h>
 
-namespace cammw {
+namespace cammw
+{
 
-struct PtrListNode {
-  PtrListNode *prev = nullptr;
-  PtrListNode *next = nullptr;
-  void *payload = nullptr;
-};
+  struct PtrListNode
+  {
+    PtrListNode *prev = nullptr;
+    PtrListNode *next = nullptr;
+    void *payload = nullptr;
+  };
 
-// 不帶鎖的鏈結串列（純資料結構）。
-class PtrList {
- public:
-  ~PtrList() { removeAll(); }
+  // 不帶鎖的鏈結串列（純資料結構）。
+  class PtrList
+  {
+  public:
+    ~PtrList() { removeAll(); }
 
-  void pushLast(PtrListNode *node) {
-    node->prev = tail_;
-    node->next = nullptr;
-    if (tail_ != nullptr) {
-      tail_->next = node;
-    } else {
-      head_ = node;
+    void pushLast(PtrListNode *node)
+    {
+      node->prev = tail_;
+      node->next = nullptr;
+      if (tail_ != nullptr)
+      {
+        tail_->next = node;
+      }
+      else
+      {
+        head_ = node;
+      }
+      tail_ = node;
+      count_++;
     }
-    tail_ = node;
-    count_++;
-  }
 
-  void remove(PtrListNode *node) {
-    if (node->prev != nullptr) {
-      node->prev->next = node->next;
-    } else {
-      head_ = node->next;
+    void remove(PtrListNode *node)
+    {
+      if (node->prev != nullptr)
+      {
+        node->prev->next = node->next;
+      }
+      else
+      {
+        head_ = node->next;
+      }
+      if (node->next != nullptr)
+      {
+        node->next->prev = node->prev;
+      }
+      else
+      {
+        tail_ = node->prev;
+      }
+      count_--;
     }
-    if (node->next != nullptr) {
-      node->next->prev = node->prev;
-    } else {
-      tail_ = node->prev;
+
+    PtrListNode *getNode(unsigned index) const
+    {
+      PtrListNode *n = head_;
+      for (unsigned i = 0; n != nullptr && i < index; ++i)
+      {
+        n = n->next;
+      }
+      return n;
     }
-    count_--;
-  }
 
-  PtrListNode *getNode(unsigned index) const {
-    PtrListNode *n = head_;
-    for (unsigned i = 0; n != nullptr && i < index; ++i) {
-      n = n->next;
+    void *get(unsigned index) const
+    {
+      PtrListNode *n = getNode(index);
+      return n != nullptr ? n->payload : nullptr;
     }
-    return n;
-  }
 
-  void *get(unsigned index) const {
-    PtrListNode *n = getNode(index);
-    return n != nullptr ? n->payload : nullptr;
-  }
+    unsigned count() const { return count_; }
 
-  unsigned count() const { return count_; }
-
-  void removeAll() {
-    PtrListNode *n = head_;
-    while (n != nullptr) {
-      PtrListNode *next = n->next;
-      free(n->payload);
-      free(n);
-      n = next;
+    void removeAll()
+    {
+      PtrListNode *n = head_;
+      while (n != nullptr)
+      {
+        PtrListNode *next = n->next;
+        free(n->payload);
+        free(n);
+        n = next;
+      }
+      head_ = tail_ = nullptr;
+      count_ = 0;
     }
-    head_ = tail_ = nullptr;
-    count_ = 0;
-  }
 
- private:
-  PtrListNode *head_ = nullptr;
-  PtrListNode *tail_ = nullptr;
-  unsigned count_ = 0;
-};
+  private:
+    PtrListNode *head_ = nullptr;
+    PtrListNode *tail_ = nullptr;
+    unsigned count_ = 0;
+  };
 
-// 帶 mutex 保護的版本——gralloc_descriptor.cpp 用的就是這個。
-class PtrLockList : public PtrList {
- public:
-  PtrLockList() { pthread_mutex_init(&mutex_, nullptr); }
-  ~PtrLockList() { pthread_mutex_destroy(&mutex_); }
+  // 帶 mutex 保護的版本——gralloc_descriptor.cpp 用的就是這個。
+  class PtrLockList : public PtrList
+  {
+  public:
+    PtrLockList() { pthread_mutex_init(&mutex_, nullptr); }
+    ~PtrLockList() { pthread_mutex_destroy(&mutex_); }
 
-  void lock() { pthread_mutex_lock(&mutex_); }
-  void unlock() { pthread_mutex_unlock(&mutex_); }
+    void lock() { pthread_mutex_lock(&mutex_); }
+    void unlock() { pthread_mutex_unlock(&mutex_); }
 
- private:
-  pthread_mutex_t mutex_;
-};
+  private:
+    pthread_mutex_t mutex_;
+  };
 
-}  // namespace cammw
+} // namespace cammw

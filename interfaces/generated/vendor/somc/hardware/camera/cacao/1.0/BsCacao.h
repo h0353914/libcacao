@@ -8,39 +8,50 @@
 
 #include <hidl/HidlPassthroughSupport.h>
 #include <hidl/TaskRunner.h>
-namespace vendor {
-namespace somc {
-namespace hardware {
-namespace camera {
-namespace cacao {
-namespace V1_0 {
+namespace vendor
+{
+    namespace somc
+    {
+        namespace hardware
+        {
+            namespace camera
+            {
+                namespace cacao
+                {
+                    namespace V1_0
+                    {
 
-struct BsCacao : ICacao, ::android::hardware::details::HidlInstrumentor {
-    explicit BsCacao(const ::android::sp<ICacao> impl);
+                        struct BsCacao : ICacao, ::android::hardware::details::HidlInstrumentor
+                        {
+                            explicit BsCacao(const ::android::sp<ICacao> impl);
 
-    /**
-     * The pure class is what this class wraps.
-     */
-    typedef ICacao Pure;
+                            /**
+                             * The pure class is what this class wraps.
+                             */
+                            typedef ICacao Pure;
 
-    typedef ::android::hardware::details::bs_tag _hidl_tag;
+                            typedef ::android::hardware::details::bs_tag _hidl_tag;
 
-    // Methods from ::android::hidl::base::V1_0::IBase follow.
-    ::android::hardware::Return<void> interfaceChain(interfaceChain_cb _hidl_cb) override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::interfaceChain::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "interfaceChain", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                            // Methods from ::android::hidl::base::V1_0::IBase follow.
+                            ::android::hardware::Return<void> interfaceChain(interfaceChain_cb _hidl_cb) override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::interfaceChain::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "interfaceChain", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->interfaceChain([&](const auto &_hidl_out_descriptors) {
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->interfaceChain([&](const auto &_hidl_out_descriptors)
+                                                                          {
             atrace_end(ATRACE_TAG_HAL);
-            #ifdef __ANDROID_DEBUGGABLE__
+#ifdef __ANDROID_DEBUGGABLE__
             if (UNLIKELY(mEnableInstrumentation)) {
                 std::vector<void *> _hidl_args;
                 _hidl_args.push_back((void *)&_hidl_out_descriptors);
@@ -48,58 +59,68 @@ struct BsCacao : ICacao, ::android::hardware::details::HidlInstrumentor {
                     callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "interfaceChain", &_hidl_args);
                 }
             }
-            #endif // __ANDROID_DEBUGGABLE__
+#endif // __ANDROID_DEBUGGABLE__
 
-            _hidl_cb(_hidl_out_descriptors);
-        });
+            _hidl_cb(_hidl_out_descriptors); });
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
-    ::android::hardware::Return<void> debug(const ::android::hardware::hidl_handle& fd, const ::android::hardware::hidl_vec<::android::hardware::hidl_string>& options) override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::debug::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            _hidl_args.push_back((void *)&fd);
-            _hidl_args.push_back((void *)&options);
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "debug", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<void> debug(const ::android::hardware::hidl_handle &fd, const ::android::hardware::hidl_vec<::android::hardware::hidl_string> &options) override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::debug::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    _hidl_args.push_back((void *)&fd);
+                                    _hidl_args.push_back((void *)&options);
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "debug", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->debug(fd, options);
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->debug(fd, options);
 
-        atrace_end(ATRACE_TAG_HAL);
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "debug", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                atrace_end(ATRACE_TAG_HAL);
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "debug", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
-    ::android::hardware::Return<void> interfaceDescriptor(interfaceDescriptor_cb _hidl_cb) override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::interfaceDescriptor::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "interfaceDescriptor", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<void> interfaceDescriptor(interfaceDescriptor_cb _hidl_cb) override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::interfaceDescriptor::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "interfaceDescriptor", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->interfaceDescriptor([&](const auto &_hidl_out_descriptor) {
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->interfaceDescriptor([&](const auto &_hidl_out_descriptor)
+                                                                               {
             atrace_end(ATRACE_TAG_HAL);
-            #ifdef __ANDROID_DEBUGGABLE__
+#ifdef __ANDROID_DEBUGGABLE__
             if (UNLIKELY(mEnableInstrumentation)) {
                 std::vector<void *> _hidl_args;
                 _hidl_args.push_back((void *)&_hidl_out_descriptor);
@@ -107,29 +128,33 @@ struct BsCacao : ICacao, ::android::hardware::details::HidlInstrumentor {
                     callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "interfaceDescriptor", &_hidl_args);
                 }
             }
-            #endif // __ANDROID_DEBUGGABLE__
+#endif // __ANDROID_DEBUGGABLE__
 
-            _hidl_cb(_hidl_out_descriptor);
-        });
+            _hidl_cb(_hidl_out_descriptor); });
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
-    ::android::hardware::Return<void> getHashChain(getHashChain_cb _hidl_cb) override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::getHashChain::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "getHashChain", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<void> getHashChain(getHashChain_cb _hidl_cb) override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::getHashChain::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "getHashChain", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->getHashChain([&](const auto &_hidl_out_hashchain) {
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->getHashChain([&](const auto &_hidl_out_hashchain)
+                                                                        {
             atrace_end(ATRACE_TAG_HAL);
-            #ifdef __ANDROID_DEBUGGABLE__
+#ifdef __ANDROID_DEBUGGABLE__
             if (UNLIKELY(mEnableInstrumentation)) {
                 std::vector<void *> _hidl_args;
                 _hidl_args.push_back((void *)&_hidl_out_hashchain);
@@ -137,93 +162,110 @@ struct BsCacao : ICacao, ::android::hardware::details::HidlInstrumentor {
                     callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "getHashChain", &_hidl_args);
                 }
             }
-            #endif // __ANDROID_DEBUGGABLE__
+#endif // __ANDROID_DEBUGGABLE__
 
-            _hidl_cb(_hidl_out_hashchain);
-        });
+            _hidl_cb(_hidl_out_hashchain); });
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
-    ::android::hardware::Return<void> setHALInstrumentation() override {
-        configureInstrumentation();
-        return ::android::hardware::Void();
-    }
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<void> setHALInstrumentation() override
+                            {
+                                configureInstrumentation();
+                                return ::android::hardware::Void();
+                            }
 
-    ::android::hardware::Return<bool> linkToDeath(const ::android::sp<::android::hardware::hidl_death_recipient>& recipient, uint64_t cookie) override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::linkToDeath::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            _hidl_args.push_back((void *)&recipient);
-            _hidl_args.push_back((void *)&cookie);
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "linkToDeath", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                            ::android::hardware::Return<bool> linkToDeath(const ::android::sp<::android::hardware::hidl_death_recipient> &recipient, uint64_t cookie) override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::linkToDeath::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    _hidl_args.push_back((void *)&recipient);
+                                    _hidl_args.push_back((void *)&cookie);
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "linkToDeath", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->linkToDeath(recipient, cookie);
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->linkToDeath(recipient, cookie);
 
-        bool _hidl_out_success = _hidl_return;
-        (void) _hidl_out_success;
-        atrace_end(ATRACE_TAG_HAL);
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            _hidl_args.push_back((void *)&_hidl_out_success);
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "linkToDeath", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                bool _hidl_out_success = _hidl_return;
+                                (void)_hidl_out_success;
+                                atrace_end(ATRACE_TAG_HAL);
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    _hidl_args.push_back((void *)&_hidl_out_success);
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "linkToDeath", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
-    ::android::hardware::Return<void> ping() override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::ping::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "ping", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<void> ping() override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::ping::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "ping", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->ping();
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->ping();
 
-        atrace_end(ATRACE_TAG_HAL);
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "ping", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                atrace_end(ATRACE_TAG_HAL);
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "ping", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
-    ::android::hardware::Return<void> getDebugInfo(getDebugInfo_cb _hidl_cb) override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::getDebugInfo::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "getDebugInfo", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<void> getDebugInfo(getDebugInfo_cb _hidl_cb) override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::getDebugInfo::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "getDebugInfo", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->getDebugInfo([&](const auto &_hidl_out_info) {
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->getDebugInfo([&](const auto &_hidl_out_info)
+                                                                        {
             atrace_end(ATRACE_TAG_HAL);
-            #ifdef __ANDROID_DEBUGGABLE__
+#ifdef __ANDROID_DEBUGGABLE__
             if (UNLIKELY(mEnableInstrumentation)) {
                 std::vector<void *> _hidl_args;
                 _hidl_args.push_back((void *)&_hidl_out_info);
@@ -231,91 +273,102 @@ struct BsCacao : ICacao, ::android::hardware::details::HidlInstrumentor {
                     callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "getDebugInfo", &_hidl_args);
                 }
             }
-            #endif // __ANDROID_DEBUGGABLE__
+#endif // __ANDROID_DEBUGGABLE__
 
-            _hidl_cb(_hidl_out_info);
-        });
+            _hidl_cb(_hidl_out_info); });
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
-    ::android::hardware::Return<void> notifySyspropsChanged() override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::notifySyspropsChanged::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "notifySyspropsChanged", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<void> notifySyspropsChanged() override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::notifySyspropsChanged::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "notifySyspropsChanged", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = addOnewayTask([mImpl = this->mImpl
-        #ifdef __ANDROID_DEBUGGABLE__
-        , mEnableInstrumentation = this->mEnableInstrumentation, mInstrumentationCallbacks = this->mInstrumentationCallbacks
-        #endif // __ANDROID_DEBUGGABLE__
-        ] {
-            mImpl->notifySyspropsChanged();
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = addOnewayTask([mImpl = this->mImpl
+#ifdef __ANDROID_DEBUGGABLE__
+                                                                   ,
+                                                                   mEnableInstrumentation = this->mEnableInstrumentation, mInstrumentationCallbacks = this->mInstrumentationCallbacks
+#endif // __ANDROID_DEBUGGABLE__
+                                ]
+                                                                  {
+                                                                      mImpl->notifySyspropsChanged();
 
-            atrace_end(ATRACE_TAG_HAL);
-            #ifdef __ANDROID_DEBUGGABLE__
-            if (UNLIKELY(mEnableInstrumentation)) {
-                std::vector<void *> _hidl_args;
-                for (const auto &callback: mInstrumentationCallbacks) {
-                    callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "notifySyspropsChanged", &_hidl_args);
-                }
-            }
-            #endif // __ANDROID_DEBUGGABLE__
+                                                                      atrace_end(ATRACE_TAG_HAL);
+#ifdef __ANDROID_DEBUGGABLE__
+                                                                      if (UNLIKELY(mEnableInstrumentation))
+                                                                      {
+                                                                          std::vector<void *> _hidl_args;
+                                                                          for (const auto &callback : mInstrumentationCallbacks)
+                                                                          {
+                                                                              callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "notifySyspropsChanged", &_hidl_args);
+                                                                          }
+                                                                      }
+#endif // __ANDROID_DEBUGGABLE__
+                                                                  });
+                                return _hidl_return;
+                            }
+                            ::android::hardware::Return<bool> unlinkToDeath(const ::android::sp<::android::hardware::hidl_death_recipient> &recipient) override
+                            {
+                                atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::unlinkToDeath::passthrough");
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    _hidl_args.push_back((void *)&recipient);
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "unlinkToDeath", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        });
-        return _hidl_return;
-    }
-    ::android::hardware::Return<bool> unlinkToDeath(const ::android::sp<::android::hardware::hidl_death_recipient>& recipient) override {
-        atrace_begin(ATRACE_TAG_HAL, "HIDL::ICacao::unlinkToDeath::passthrough");
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            _hidl_args.push_back((void *)&recipient);
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_ENTRY, "android.hidl.base", "1.0", "IBase", "unlinkToDeath", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
+                                auto _hidl_return = mImpl->unlinkToDeath(recipient);
 
-        ::android::hardware::Status _hidl_error = ::android::hardware::Status::ok();
-        auto _hidl_return = mImpl->unlinkToDeath(recipient);
+                                bool _hidl_out_success = _hidl_return;
+                                (void)_hidl_out_success;
+                                atrace_end(ATRACE_TAG_HAL);
+#ifdef __ANDROID_DEBUGGABLE__
+                                if (UNLIKELY(mEnableInstrumentation))
+                                {
+                                    std::vector<void *> _hidl_args;
+                                    _hidl_args.push_back((void *)&_hidl_out_success);
+                                    for (const auto &callback : mInstrumentationCallbacks)
+                                    {
+                                        callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "unlinkToDeath", &_hidl_args);
+                                    }
+                                }
+#endif // __ANDROID_DEBUGGABLE__
 
-        bool _hidl_out_success = _hidl_return;
-        (void) _hidl_out_success;
-        atrace_end(ATRACE_TAG_HAL);
-        #ifdef __ANDROID_DEBUGGABLE__
-        if (UNLIKELY(mEnableInstrumentation)) {
-            std::vector<void *> _hidl_args;
-            _hidl_args.push_back((void *)&_hidl_out_success);
-            for (const auto &callback: mInstrumentationCallbacks) {
-                callback(InstrumentationEvent::PASSTHROUGH_EXIT, "android.hidl.base", "1.0", "IBase", "unlinkToDeath", &_hidl_args);
-            }
-        }
-        #endif // __ANDROID_DEBUGGABLE__
+                                if (!_hidl_error.isOk())
+                                    return _hidl_error;
+                                return _hidl_return;
+                            }
 
-        if (!_hidl_error.isOk()) return _hidl_error;
-        return _hidl_return;
-    }
+                        private:
+                            const ::android::sp<ICacao> mImpl;
+                            ::android::hardware::details::TaskRunner mOnewayQueue;
 
-private:
-    const ::android::sp<ICacao> mImpl;
-    ::android::hardware::details::TaskRunner mOnewayQueue;
+                            ::android::hardware::Return<void> addOnewayTask(std::function<void(void)>);
+                        };
 
-    ::android::hardware::Return<void> addOnewayTask(std::function<void(void)>);
+                    } // namespace V1_0
+                } // namespace cacao
+            } // namespace camera
+        } // namespace hardware
+    } // namespace somc
+} // namespace vendor
 
-};
-
-}  // namespace V1_0
-}  // namespace cacao
-}  // namespace camera
-}  // namespace hardware
-}  // namespace somc
-}  // namespace vendor
-
-#endif  // HIDL_GENERATED_VENDOR_SOMC_HARDWARE_CAMERA_CACAO_V1_0_BSCACAO_H
+#endif // HIDL_GENERATED_VENDOR_SOMC_HARDWARE_CAMERA_CACAO_V1_0_BSCACAO_H

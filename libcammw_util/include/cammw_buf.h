@@ -40,12 +40,14 @@
 
 #include <stdint.h>
 
-struct cammw_buf_t {
-  int32_t w[26];  // 26 * 4 = 104 bytes
+struct cammw_buf_t
+{
+  int32_t w[26]; // 26 * 4 = 104 bytes
 };
 static_assert(sizeof(cammw_buf_t) == 104, "kong 合成的 cammw_buf_t 大小");
 
-enum cammw_buf_word : int {
+enum cammw_buf_word : int
+{
   kCammwBufBase = 0,
   kCammwBufSize = 1,
   kCammwBufFd = 2,

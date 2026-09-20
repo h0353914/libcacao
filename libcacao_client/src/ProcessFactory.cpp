@@ -24,35 +24,40 @@
 #include <cacao/ProcessCtrlGatewayBase.h>
 #include <cacao/ICacaoService.h>
 
-namespace cacao {
+namespace cacao
+{
 
-/* ── ProcessFactory ─────────────────────────────────────────── */
+    /* ── ProcessFactory ─────────────────────────────────────────── */
 
-/* createEvent — 原始 binary 直接回傳 0（nullptr） */
-ProcessEventBase* ProcessFactory::createEvent(uint32_t /*type*/,
-                                               ISerialize::SerializedData* /*sd*/) {
-    return nullptr;
-}
+    /* createEvent — 原始 binary 直接回傳 0（nullptr） */
+    ProcessEventBase *ProcessFactory::createEvent(uint32_t /*type*/,
+                                                  ISerialize::SerializedData * /*sd*/)
+    {
+        return nullptr;
+    }
 
-/* createProcess — 轉呼叫 android::Cacao::create()（static factory） */
-android::Cacao* ProcessFactory::createProcess() {
-    return android::Cacao::create();
-}
+    /* createProcess — 轉呼叫 android::Cacao::create()（static factory） */
+    android::Cacao *ProcessFactory::createProcess()
+    {
+        return android::Cacao::create();
+    }
 
-/* getJpegBufferSize — 轉呼叫 android::Cacao::getJpegBufferSize(size)
- * android::Cacao::getJpegBufferSize 只存取靜態 mService，不依賴 this。
- * 透過 reinterpret_cast 複製原始 binary 的 tail-call 行為。 */
-int ProcessFactory::getJpegBufferSize(ImageSize size) {
-    return android::Cacao::getJpegBufferSize(size);
-}
+    /* getJpegBufferSize — 轉呼叫 android::Cacao::getJpegBufferSize(size)
+     * android::Cacao::getJpegBufferSize 只存取靜態 mService，不依賴 this。
+     * 透過 reinterpret_cast 複製原始 binary 的 tail-call 行為。 */
+    int ProcessFactory::getJpegBufferSize(ImageSize size)
+    {
+        return android::Cacao::getJpegBufferSize(size);
+    }
 
-/* ── ProcessCtrlCapsFactory ─────────────────────────────────── */
+    /* ── ProcessCtrlCapsFactory ─────────────────────────────────── */
 
-/* getCaps — 轉呼叫 android::Cacao::getCaps(camIdx, caps)
- * android::Cacao::getCaps 只存取靜態 mService，不依賴 this。 */
-int ProcessCtrlCapsFactory::getCaps(const ProcessCtrlCaps::CameraIndex& camIdx,
-                                     Caps* caps) {
-    return android::Cacao::getCaps(camIdx, caps);
-}
+    /* getCaps — 轉呼叫 android::Cacao::getCaps(camIdx, caps)
+     * android::Cacao::getCaps 只存取靜態 mService，不依賴 this。 */
+    int ProcessCtrlCapsFactory::getCaps(const ProcessCtrlCaps::CameraIndex &camIdx,
+                                        Caps *caps)
+    {
+        return android::Cacao::getCaps(camIdx, caps);
+    }
 
 } // namespace cacao

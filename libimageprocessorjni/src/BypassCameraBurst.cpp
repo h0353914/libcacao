@@ -15,20 +15,20 @@
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define ALOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
-extern cacao::ProcessCtrlResult* createResultWithCtx(imageprocessor::BypassCameraContext* ctx);
+extern cacao::ProcessCtrlResult *createResultWithCtx(imageprocessor::BypassCameraContext *ctx);
 
 // 宣告 BypassCameraBurstBufferManager.cpp 中定義的函式
 extern "C" int BypassCameraBurstBufferManager_createBufVector(
-        imageprocessor::BypassCameraContext* ctx,
-        android::Vector<cacao::ImageBuf*>** outVec,
-        int count);
-extern "C" imageprocessor::BufEntry* BypassCameraBurstBufferManager_findByNativeHandle(
-        imageprocessor::BypassCameraContext* ctx, void* nativeHandle);
+    imageprocessor::BypassCameraContext *ctx,
+    android::Vector<cacao::ImageBuf *> **outVec,
+    int count);
+extern "C" imageprocessor::BufEntry *BypassCameraBurstBufferManager_findByNativeHandle(
+    imageprocessor::BypassCameraContext *ctx, void *nativeHandle);
 extern "C" int BypassCameraBurstBufferManager_queueBuffer(
-        imageprocessor::BypassCameraContext* ctx,
-        imageprocessor::BufEntry* entry);
+    imageprocessor::BypassCameraContext *ctx,
+    imageprocessor::BufEntry *entry);
 extern "C" void BypassCameraBurstBufferManager_dump(
-        imageprocessor::BypassCameraContext* ctx);
+    imageprocessor::BypassCameraContext *ctx);
 
 // ─────────────────────────────────────────────────────
 // BypassCameraBurst_initialize
@@ -38,48 +38,59 @@ extern "C" void BypassCameraBurstBufferManager_dump(
 // burst 模組自己的一份 JNI global ref/methodID(ctx+0xC8/0xCC) 與 listener
 // 物件(ctx+0xD0，供 BypassCameraBurst_requestSnapshot 使用)。
 // ─────────────────────────────────────────────────────
-extern "C" int BypassCameraBurst_initialize(JNIEnv* env, jobject thiz,
-                                  imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx) return -1;
+extern "C" int BypassCameraBurst_initialize(JNIEnv *env, jobject thiz,
+                                            imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx)
+        return -1;
 
     ctx->field_C0 = 0;
     ctx->burstInitialized = true;
 
     // burst 模組專用的 global ref（與 photoJObj/videoJObj 同構但獨立）
-    if (!ctx->burstJObj && env && thiz) {
+    if (!ctx->burstJObj && env && thiz)
+    {
         ctx->burstJObj = env->NewGlobalRef(thiz);
     }
 
     // burst 模組專用的 callbackFromNative methodID（反編譯確認用
     // FindClass 而非 GetObjectClass(thiz)，與 Photo/Video 取得方式不同）
-    if (!ctx->burstMethodId && env) {
+    if (!ctx->burstMethodId && env)
+    {
         jclass clazz = env->FindClass(
-                "com/sonymobile/imageprocessor/bypasscamera2/BypassCamera");
-        if (clazz) {
+            "com/sonymobile/imageprocessor/bypasscamera2/BypassCamera");
+        if (clazz)
+        {
             ctx->burstMethodId = env->GetMethodID(clazz,
-                    "callbackFromNative", "(IIIZZZIII)V");
+                                                  "callbackFromNative", "(IIIZZZIII)V");
             env->DeleteLocalRef(clazz);
         }
     }
 
-    if (!ctx->burstSnapshotCb) {
+    if (!ctx->burstSnapshotCb)
+    {
         ctx->burstSnapshotCb = new imageprocessor::BurstCallback();
     }
 
-    if (!ctx->burstPrepareCb) {
+    if (!ctx->burstPrepareCb)
+    {
         ctx->burstPrepareCb = new imageprocessor::BurstShotPrepareCallback();
     }
-    if (!ctx->burstFinishCb) {
+    if (!ctx->burstFinishCb)
+    {
         ctx->burstFinishCb = new imageprocessor::BurstShotFinishCallback();
     }
-    if (!ctx->burstCb) {
+    if (!ctx->burstCb)
+    {
         ctx->burstCb = new imageprocessor::BurstCallback();
     }
 
-    if (!ctx->burstPrepareResult) {
+    if (!ctx->burstPrepareResult)
+    {
         ctx->burstPrepareResult = createResultWithCtx(ctx);
     }
-    if (!ctx->burstFinishResult) {
+    if (!ctx->burstFinishResult)
+    {
         ctx->burstFinishResult = createResultWithCtx(ctx);
     }
 
@@ -98,20 +109,25 @@ extern "C" int BypassCameraBurst_initialize(JNIEnv* env, jobject thiz,
 // 的第一個 uint32_t（即 dequeueCount）。原版此值非 0 時只印一筆診斷 log
 // （不影響記憶體清理），格式字串與函式名稱皆從 rodata 逐字讀出比對。
 // ─────────────────────────────────────────────────────
-extern "C" void BypassCameraBurst_finalize(JNIEnv* env, jobject /*thiz*/,
-                                            imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx) return;
+extern "C" void BypassCameraBurst_finalize(JNIEnv *env, jobject /*thiz*/,
+                                           imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx)
+        return;
 
-    if (ctx->bufCtx.dequeueCount != 0) {
+    if (ctx->bufCtx.dequeueCount != 0)
+    {
         __android_log_print(ANDROID_LOG_WARN, NULL,
-            "%s: wrong mDequeueCounter=%d",
-            "BypassCameraBurst_finalize", ctx->bufCtx.dequeueCount);
+                            "%s: wrong mDequeueCounter=%d",
+                            "BypassCameraBurst_finalize", ctx->bufCtx.dequeueCount);
     }
 
     ctx->burstInitialized = false;
 
-    if (ctx->burstJObj) {
-        if (env) env->DeleteGlobalRef(ctx->burstJObj);
+    if (ctx->burstJObj)
+    {
+        if (env)
+            env->DeleteGlobalRef(ctx->burstJObj);
         ctx->burstJObj = nullptr;
     }
 
@@ -123,22 +139,26 @@ extern "C" void BypassCameraBurst_finalize(JNIEnv* env, jobject /*thiz*/,
 // BypassCameraPhoto_prepareBurstShot
 // 來自 so_32（nativeRequestPrepareBurstShot(J)I → BypassCameraPhoto_prepareBurstShot）
 // ─────────────────────────────────────────────────────
-extern "C" int BypassCameraPhoto_prepareBurstShot(imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx || !ctx->cacao) return -1;
-    if (!ctx->burstPrepareCb) {
+extern "C" int BypassCameraPhoto_prepareBurstShot(imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx || !ctx->cacao)
+        return -1;
+    if (!ctx->burstPrepareCb)
+    {
         ALOGE("BypassCameraPhoto_prepareBurstShot: not initialized");
         return -1;
     }
 
-    if (!ctx->burstPrepareResult) {
+    if (!ctx->burstPrepareResult)
+    {
         ctx->burstPrepareResult = createResultWithCtx(ctx);
     }
 
     cacao::ProcessCtrlParam param;
     ctx->cacao->process(
-            &param,
-            ctx->burstPrepareCb,
-            static_cast<cacao::ProcessCtrlResult*>(ctx->burstPrepareResult));
+        &param,
+        ctx->burstPrepareCb,
+        static_cast<cacao::ProcessCtrlResult *>(ctx->burstPrepareResult));
     return 0;
 }
 
@@ -146,22 +166,26 @@ extern "C" int BypassCameraPhoto_prepareBurstShot(imageprocessor::BypassCameraCo
 // BypassCameraPhoto_finishBurstShot
 // 來自 so_32（nativeRequestFinishBurstShot → 此函式）
 // ─────────────────────────────────────────────────────
-extern "C" int BypassCameraPhoto_finishBurstShot(imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx || !ctx->cacao) return -1;
-    if (!ctx->burstFinishCb) {
+extern "C" int BypassCameraPhoto_finishBurstShot(imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx || !ctx->cacao)
+        return -1;
+    if (!ctx->burstFinishCb)
+    {
         ALOGE("BypassCameraPhoto_finishBurstShot: not initialized");
         return -1;
     }
 
-    if (!ctx->burstFinishResult) {
+    if (!ctx->burstFinishResult)
+    {
         ctx->burstFinishResult = createResultWithCtx(ctx);
     }
 
     cacao::ProcessCtrlParam param;
     ctx->cacao->process(
-            &param,
-            ctx->burstFinishCb,
-            static_cast<cacao::ProcessCtrlResult*>(ctx->burstFinishResult));
+        &param,
+        ctx->burstFinishCb,
+        static_cast<cacao::ProcessCtrlResult *>(ctx->burstFinishResult));
     return 0;
 }
 
@@ -190,23 +214,34 @@ extern "C" int BypassCameraPhoto_finishBurstShot(imageprocessor::BypassCameraCon
 // 選項），留給之後能實際手動測試連拍功能時再補齊。
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraBurst_requestSnapshot(
-        JNIEnv* env, jobject /*thiz*/,
-        imageprocessor::BypassCameraContext* ctx,
-        jboolean p4, jboolean p5,
-        jdouble p6, jdouble p7, jdouble p8,
-        jboolean p9, jstring p10,
-        jint p11, jint p12,
-        jboolean p13, jint p14,
-        jboolean p15, jboolean p16, jboolean p17, jboolean p18,
-        jint p19, jboolean p20, jint p21) {
-    (void)p11; (void)p12; (void)p13; (void)p14;
-    (void)p15; (void)p16; (void)p17; (void)p18; (void)p19; (void)p20;
+    JNIEnv *env, jobject /*thiz*/,
+    imageprocessor::BypassCameraContext *ctx,
+    jboolean p4, jboolean p5,
+    jdouble p6, jdouble p7, jdouble p8,
+    jboolean p9, jstring p10,
+    jint p11, jint p12,
+    jboolean p13, jint p14,
+    jboolean p15, jboolean p16, jboolean p17, jboolean p18,
+    jint p19, jboolean p20, jint p21)
+{
+    (void)p11;
+    (void)p12;
+    (void)p13;
+    (void)p14;
+    (void)p15;
+    (void)p16;
+    (void)p17;
+    (void)p18;
+    (void)p19;
+    (void)p20;
 
-    if (!ctx || !ctx->cacao) {
+    if (!ctx || !ctx->cacao)
+    {
         ALOGE("BypassCameraBurst_requestSnapshot: null ctx or cacao");
         return -1;
     }
-    if (!ctx->burstSnapshotCb) {
+    if (!ctx->burstSnapshotCb)
+    {
         ALOGE("BypassCameraBurst_requestSnapshot: not initialized");
         return -1;
     }
@@ -215,29 +250,32 @@ extern "C" int BypassCameraBurst_requestSnapshot(
     const uint32_t requestId = ctx->field_C0;
 
     cacao::ProcessCtrlParam param;
-    uint8_t* d = param._data;
-    *reinterpret_cast<uint32_t*>(d) = 4;  // mode = 4（跟 photo 共用同一種 ProcessCtrlParam 格式）
+    uint8_t *d = param._data;
+    *reinterpret_cast<uint32_t *>(d) = 4; // mode = 4（跟 photo 共用同一種 ProcessCtrlParam 格式）
 
     // GPS 座標/字串：與 photo 相同的 consumer 端固定 offset，高信心度對應。
     d[8] = p4 ? 1 : 0;
     d[9] = p5 ? 1 : 0;
-    *reinterpret_cast<double*>(d + 0x10) = p6;  // exifGpsLatitude
-    *reinterpret_cast<double*>(d + 0x18) = p7;  // exifGpsLongitude
-    *reinterpret_cast<double*>(d + 0x20) = p8;  // exifGpsAltitude
+    *reinterpret_cast<double *>(d + 0x10) = p6; // exifGpsLatitude
+    *reinterpret_cast<double *>(d + 0x18) = p7; // exifGpsLongitude
+    *reinterpret_cast<double *>(d + 0x20) = p8; // exifGpsAltitude
     d[0x28] = p9 ? 1 : 0;
 
     memset(d + 0x29, 0, 0x100);
-    if (p10) {
-        const char* str = env->GetStringUTFChars(p10, nullptr);
-        if (str) {
-            strncpy(reinterpret_cast<char*>(d + 0x29), str, 0xFF);
+    if (p10)
+    {
+        const char *str = env->GetStringUTFChars(p10, nullptr);
+        if (str)
+        {
+            strncpy(reinterpret_cast<char *>(d + 0x29), str, 0xFF);
             env->ReleaseStringUTFChars(p10, str);
         }
     }
 
-    android::Vector<cacao::ImageBuf*>* bufVec = nullptr;
+    android::Vector<cacao::ImageBuf *> *bufVec = nullptr;
     int got = BypassCameraBurstBufferManager_createBufVector(ctx, &bufVec, static_cast<int>(p21));
-    if (got == 0) {
+    if (got == 0)
+    {
         ALOGE("BypassCameraBurst_requestSnapshot: createBufVector got 0 buffers");
         delete bufVec;
         return -1;
@@ -245,18 +283,20 @@ extern "C" int BypassCameraBurst_requestSnapshot(
 
     // 每次請求專屬的 wrapper + ProcessCtrlResult（刻意不在 callback 內
     // delete，見 BurstRequestData 的說明）。
-    auto* reqData = new imageprocessor::BurstRequestData{ctx, bufVec, requestId};
-    cacao::ProcessCtrlResult* result = new cacao::ProcessCtrlResult();
+    auto *reqData = new imageprocessor::BurstRequestData{ctx, bufVec, requestId};
+    cacao::ProcessCtrlResult *result = new cacao::ProcessCtrlResult();
     result->field_10 = reinterpret_cast<uintptr_t>(reqData);
 
     ctx->cacao->processAsync(&param, bufVec, ctx->burstSnapshotCb, result);
 
-    for (size_t i = 0; i < bufVec->size(); i++) {
-        cacao::ImageBuf* imgBuf = (*bufVec)[i];
-        imageprocessor::BufEntry* entry =
-                BypassCameraBurstBufferManager_findByNativeHandle(ctx, imgBuf->getNative());
-        if (entry) {
-            entry->state = 2;  // in_use
+    for (size_t i = 0; i < bufVec->size(); i++)
+    {
+        cacao::ImageBuf *imgBuf = (*bufVec)[i];
+        imageprocessor::BufEntry *entry =
+            BypassCameraBurstBufferManager_findByNativeHandle(ctx, imgBuf->getNative());
+        if (entry)
+        {
+            entry->state = 2; // in_use
             entry->tag = static_cast<int32_t>(requestId);
         }
     }

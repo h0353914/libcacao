@@ -31,8 +31,8 @@
 
 // 前向宣告 (同檔案內的函式)
 extern "C" void BypassCameraBurstBufferManager_deleteBuffers(
-        imageprocessor::BypassCameraContext* ctx,
-        android::Vector<cacao::ImageBuf*>* bufs);
+    imageprocessor::BypassCameraContext *ctx,
+    android::Vector<cacao::ImageBuf *> *bufs);
 
 // ─────────────────────────────────────────────────────
 // getJpegBufferSize — 取得 JPEG buffer 大小
@@ -61,42 +61,49 @@ extern "C" void BypassCameraBurstBufferManager_deleteBuffers(
 // param_1=env, param_2=Java Surface, param_3=totalBufCount, param_4=ctx
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraBurstBufferManager_initializeSurface(
-        JNIEnv* env, jobject javaSurface, int totalBufCount,
-        imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx || !javaSurface) return -1;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
+    JNIEnv *env, jobject javaSurface, int totalBufCount,
+    imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx || !javaSurface)
+        return -1;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
 
     // 原始 .so 的做法：getSurface → getIGBP → new Surface(producer) 建立獨立 Surface
     // 使用 sp<Surface>::operator= 賦值到 ctx，sp 自動管理舊值的 decStrong
     jclass surfaceClass = env->GetObjectClass(javaSurface);
-    if (!surfaceClass) {
+    if (!surfaceClass)
+    {
         ALOGE("initializeSurface: GetObjectClass failed");
         return -1;
     }
     jfieldID nativeField = env->GetFieldID(surfaceClass, "mNativeObject", "J");
     env->DeleteLocalRef(surfaceClass);
-    if (!nativeField) {
+    if (!nativeField)
+    {
         ALOGE("initializeSurface: GetFieldID mNativeObject failed");
         return -1;
     }
     jlong nativePtr = env->GetLongField(javaSurface, nativeField);
-    if (!nativePtr) {
+    if (!nativePtr)
+    {
         ALOGE("initializeSurface: mNativeObject is null");
         return -1;
     }
-    android::Surface* javaNativeSurface =
-        reinterpret_cast<android::Surface*>((uintptr_t)nativePtr);
+    android::Surface *javaNativeSurface =
+        reinterpret_cast<android::Surface *>((uintptr_t)nativePtr);
 
     android::sp<android::IGraphicBufferProducer> producer =
         javaNativeSurface->getIGraphicBufferProducer();
-    if (producer == nullptr) {
+    if (producer == nullptr)
+    {
         ALOGE("initializeSurface: getIGraphicBufferProducer failed");
         return -1;
     }
 
     // 建立獨立的 native Surface（匹配原始 .so operator_new(0x788) + Surface ctor）
     android::sp<android::Surface> ownSurface = new android::Surface(producer, false);
-    if (ownSurface == nullptr) {
+    if (ownSurface == nullptr)
+    {
         ALOGE("initializeSurface: new Surface failed");
         return -1;
     }
@@ -105,12 +112,13 @@ extern "C" int BypassCameraBurstBufferManager_initializeSurface(
     bc->surface = ownSurface;
     bc->totalBufCount = totalBufCount;
 
-    ANativeWindow* window = bc->surface.get();
+    ANativeWindow *window = bc->surface.get();
 
     // 原始 .so 操作序列 (Ghidra 0x1a3f0):
     // 1. API_CONNECT(NATIVE_WINDOW_API_CAMERA)
     int ret = native_window_api_connect(window, NATIVE_WINDOW_API_CAMERA);
-    if (ret != 0) {
+    if (ret != 0)
+    {
         ALOGE("initializeSurface: api_connect failed: %d", ret);
         goto fail;
     }
@@ -128,9 +136,9 @@ extern "C" int BypassCameraBurstBufferManager_initializeSurface(
     // 呼叫順序也是 SET_USAGE64 在 SET_SCALING_MODE/SET_BUFFERS_TRANSFORM
     // 之前，這裡一併調整。
     native_window_set_usage(window,
-            0x20000u   /* GRALLOC_USAGE_HW_CAMERA_WRITE */ |
-            0x3u       /* GRALLOC_USAGE_SW_READ_OFTEN */ |
-            0x20u);    /* GRALLOC_USAGE_SW_WRITE_RARELY */
+                            0x20000u /* GRALLOC_USAGE_HW_CAMERA_WRITE */ |
+                                0x3u /* GRALLOC_USAGE_SW_READ_OFTEN */ |
+                                0x20u); /* GRALLOC_USAGE_SW_WRITE_RARELY */
     native_window_set_scaling_mode(window, NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW);
     native_window_set_buffers_transform(window, 0);
 
@@ -142,25 +150,28 @@ extern "C" int BypassCameraBurstBufferManager_initializeSurface(
         ALOGD("initializeSurface: Surface size=%dx%d", w, h);
 
         cacao::ImageSize imgSize;
-        imgSize.width  = (uint32_t)w;
+        imgSize.width = (uint32_t)w;
         imgSize.height = (uint32_t)h;
         int32_t jpegSize = (int32_t)cacao::ProcessFactory::getJpegBufferSize(imgSize);
         ALOGD("initializeSurface: jpegBufferSize=%d", jpegSize);
-        if (jpegSize < 1) {
+        if (jpegSize < 1)
+        {
             ALOGE("initializeSurface: jpegBufferSize invalid");
             goto fail;
         }
 
         // 4. SET_BUFFER_COUNT(totalBufCount)
         ret = native_window_set_buffer_count(window, totalBufCount);
-        if (ret != 0) {
+        if (ret != 0)
+        {
             ALOGE("initializeSurface: set_buffer_count(%d) failed: %d", totalBufCount, ret);
             goto fail;
         }
 
         // 5. SET_BUFFERS_DIMENSIONS(jpegSize, 1) — BLOB 格式: width=jpegSize, height=1
         ret = native_window_set_buffers_dimensions(window, jpegSize, 1);
-        if (ret != 0) {
+        if (ret != 0)
+        {
             ALOGE("initializeSurface: set_buffers_dimensions(%d,1) failed: %d", jpegSize, ret);
             goto fail;
         }
@@ -181,13 +192,16 @@ fail:
 // 來自 so_32 @ 0x0001a6e1
 // ─────────────────────────────────────────────────────
 extern "C" void BypassCameraBurstBufferManager_finalizeSurface(
-        imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx) return;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
+    imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx)
+        return;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
 
     pthread_mutex_lock(&bc->mutex);
-    if (bc->surface != nullptr) {
-        ANativeWindow* window = bc->surface.get();
+    if (bc->surface != nullptr)
+    {
+        ANativeWindow *window = bc->surface.get();
         native_window_api_disconnect(window, NATIVE_WINDOW_API_CAMERA);
         bc->surface.clear();
         bc->surface = nullptr;
@@ -209,11 +223,14 @@ extern "C" void BypassCameraBurstBufferManager_finalizeSurface(
 // BufEntry::state，不會再 add/remove。
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraBurstBufferManager_createBuffers(
-        imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx) return -1;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
-    ANativeWindow* window = bc->surface.get();
-    if (!window) {
+    imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx)
+        return -1;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
+    ANativeWindow *window = bc->surface.get();
+    if (!window)
+    {
         ALOGE("BypassCameraBurstBufferManager_createBuffers: no surface");
         return -1;
     }
@@ -221,18 +238,20 @@ extern "C" int BypassCameraBurstBufferManager_createBuffers(
     // 先刪除舊 buffer
     BypassCameraBurstBufferManager_deleteBuffers(ctx, nullptr);
 
-    bc->byBufferPtr = new android::SortedVector<android::key_value_pair_t<void*, imageprocessor::BufEntry*>>();
-    bc->byNativeHandle = new android::SortedVector<android::key_value_pair_t<void*, imageprocessor::BufEntry*>>();
+    bc->byBufferPtr = new android::SortedVector<android::key_value_pair_t<void *, imageprocessor::BufEntry *>>();
+    bc->byNativeHandle = new android::SortedVector<android::key_value_pair_t<void *, imageprocessor::BufEntry *>>();
 
     int count = bc->totalBufCount;
     ALOGD("BypassCameraBurstBufferManager_createBuffers: creating %d buffers", count);
 
-    for (int i = 0; i < count; i++) {
-        ANativeWindowBuffer* anwb = nullptr;
+    for (int i = 0; i < count; i++)
+    {
+        ANativeWindowBuffer *anwb = nullptr;
         int fence = -1;
 
         int ret = window->dequeueBuffer(window, &anwb, &fence);
-        if (ret != 0 || !anwb) {
+        if (ret != 0 || !anwb)
+        {
             ALOGE("BypassCameraBurstBufferManager_createBuffers: dequeueBuffer[%d] failed: %d", i, ret);
             return -1;
         }
@@ -250,34 +269,38 @@ extern "C" int BypassCameraBurstBufferManager_createBuffers(
         // Height 為 0 代表 changeToPhotoMode 還沒設過（例如 burst 模式路徑），
         // 這種情況下退回原本用 anwb 自己回報的尺寸，不影響 burst。
         cacao::ImageSize sz;
-        if (ctx->cachedPhotoOutWidth != 0 && ctx->cachedPhotoOutHeight != 0) {
+        if (ctx->cachedPhotoOutWidth != 0 && ctx->cachedPhotoOutHeight != 0)
+        {
             sz.width = ctx->cachedPhotoOutWidth;
             sz.height = ctx->cachedPhotoOutHeight;
-        } else {
+        }
+        else
+        {
             sz.width = anwb->width;
             sz.height = anwb->height;
         }
-        cacao::ImageBuf* imgBuf = new cacao::ImageBuf(
-            (void*)anwb->handle, sz, cacao::DataSpace(1), cacao::ImageFormat(0));
+        cacao::ImageBuf *imgBuf = new cacao::ImageBuf(
+            (void *)anwb->handle, sz, cacao::DataSpace(1), cacao::ImageFormat(0));
 
-        imageprocessor::BufEntry* entry = new imageprocessor::BufEntry();
+        imageprocessor::BufEntry *entry = new imageprocessor::BufEntry();
         entry->fence = fence;
         entry->imageBuf = imgBuf;
         entry->anwb = anwb;
-        entry->state = 0;  // free
+        entry->state = 0; // free
         entry->tag = -1;
 
-        bc->byBufferPtr->add(android::key_value_pair_t<void*, imageprocessor::BufEntry*>(
-                static_cast<void*>(anwb), entry));
-        bc->byNativeHandle->add(android::key_value_pair_t<void*, imageprocessor::BufEntry*>(
-                imgBuf->getNative(), entry));
+        bc->byBufferPtr->add(android::key_value_pair_t<void *, imageprocessor::BufEntry *>(
+            static_cast<void *>(anwb), entry));
+        bc->byNativeHandle->add(android::key_value_pair_t<void *, imageprocessor::BufEntry *>(
+            imgBuf->getNative(), entry));
     }
 
     // Queue 所有 buffer 回 Surface (原始 .so 的做法)
     // 這樣它們就進入 Surface 的 buffer queue，之後可以再 dequeue
-    for (size_t i = 0; i < bc->byBufferPtr->size(); i++) {
-        imageprocessor::BufEntry* e = (*bc->byBufferPtr)[i].value;
-        window->cancelBuffer(window, (ANativeWindowBuffer*)e->anwb, e->fence);
+    for (size_t i = 0; i < bc->byBufferPtr->size(); i++)
+    {
+        imageprocessor::BufEntry *e = (*bc->byBufferPtr)[i].value;
+        window->cancelBuffer(window, (ANativeWindowBuffer *)e->anwb, e->fence);
         e->fence = -1;
         e->state = 0;
     }
@@ -286,7 +309,7 @@ extern "C" int BypassCameraBurstBufferManager_createBuffers(
     bc->dequeueCount = 0;
 
     ALOGD("BypassCameraBurstBufferManager_createBuffers: done, %zu buffers created",
-        bc->byBufferPtr->size());
+          bc->byBufferPtr->size());
     return 0;
 }
 
@@ -295,16 +318,22 @@ extern "C" int BypassCameraBurstBufferManager_createBuffers(
 // 來自 so_32 @ 0x0001a9c5
 // ─────────────────────────────────────────────────────
 extern "C" void BypassCameraBurstBufferManager_deleteBuffers(
-        imageprocessor::BypassCameraContext* ctx,
-        android::Vector<cacao::ImageBuf*>* bufs) {
-    if (!ctx) return;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
+    imageprocessor::BypassCameraContext *ctx,
+    android::Vector<cacao::ImageBuf *> *bufs)
+{
+    if (!ctx)
+        return;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
 
-    if (bc->byBufferPtr) {
-        for (size_t i = 0; i < bc->byBufferPtr->size(); i++) {
-            imageprocessor::BufEntry* e = (*bc->byBufferPtr)[i].value;
-            if (e) {
-                if (e->imageBuf) {
+    if (bc->byBufferPtr)
+    {
+        for (size_t i = 0; i < bc->byBufferPtr->size(); i++)
+        {
+            imageprocessor::BufEntry *e = (*bc->byBufferPtr)[i].value;
+            if (e)
+            {
+                if (e->imageBuf)
+                {
                     delete e->imageBuf;
                 }
                 // [已確認，原本遺漏] 反編譯 so_32 @ 0x1a9c5 確認原版在刪除每個
@@ -318,7 +347,8 @@ extern "C" void BypassCameraBurstBufferManager_deleteBuffers(
                 // （"invalid pthread_t 0x84 passed to libc"），懷疑與長期
                 // 洩漏的 fence fd 耗盡/汙染 vendor 端資源池有關，修正後待
                 // 進一步驗證是否根治。
-                if (e->fence != -1) {
+                if (e->fence != -1)
+                {
                     close(e->fence);
                 }
                 delete e;
@@ -327,7 +357,8 @@ extern "C" void BypassCameraBurstBufferManager_deleteBuffers(
         delete bc->byBufferPtr;
         bc->byBufferPtr = nullptr;
     }
-    if (bc->byNativeHandle) {
+    if (bc->byNativeHandle)
+    {
         // 同一批 BufEntry* 已經在上面刪過，這裡只需要銷毀容器本身
         delete bc->byNativeHandle;
         bc->byNativeHandle = nullptr;
@@ -345,46 +376,54 @@ extern "C" void BypassCameraBurstBufferManager_deleteBuffers(
 // 線性搜尋）
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraBurstBufferManager_dequeueBuffer(
-        imageprocessor::BypassCameraContext* ctx,
-        imageprocessor::BufEntry** outEntry) {
-    if (!ctx || !outEntry) return -1;
+    imageprocessor::BypassCameraContext *ctx,
+    imageprocessor::BufEntry **outEntry)
+{
+    if (!ctx || !outEntry)
+        return -1;
     *outEntry = nullptr;
 
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
     pthread_mutex_lock(&bc->mutex);
 
-    if (!bc->ready) {
+    if (!bc->ready)
+    {
         ALOGE("BypassCameraBurstBufferManager_dequeueBuffer: not ready");
         pthread_mutex_unlock(&bc->mutex);
         return -1;
     }
 
-    ANativeWindow* window = bc->surface.get();
-    if (!window) {
+    ANativeWindow *window = bc->surface.get();
+    if (!window)
+    {
         ALOGE("BypassCameraBurstBufferManager_dequeueBuffer: no surface");
         pthread_mutex_unlock(&bc->mutex);
         return -1;
     }
 
-    ANativeWindowBuffer* anwb = nullptr;
+    ANativeWindowBuffer *anwb = nullptr;
     int fence = -1;
     int ret = window->dequeueBuffer(window, &anwb, &fence);
-    if (ret != 0 || !anwb) {
+    if (ret != 0 || !anwb)
+    {
         ALOGE("BypassCameraBurstBufferManager_dequeueBuffer: dequeueBuffer failed: %d", ret);
         pthread_mutex_unlock(&bc->mutex);
         return -1;
     }
 
-    imageprocessor::BufEntry* found = nullptr;
-    if (bc->byBufferPtr) {
+    imageprocessor::BufEntry *found = nullptr;
+    if (bc->byBufferPtr)
+    {
         ssize_t idx = bc->byBufferPtr->indexOf(
-                android::key_value_pair_t<void*, imageprocessor::BufEntry*>(static_cast<void*>(anwb)));
-        if (idx >= 0) {
+            android::key_value_pair_t<void *, imageprocessor::BufEntry *>(static_cast<void *>(anwb)));
+        if (idx >= 0)
+        {
             found = (*bc->byBufferPtr)[idx].value;
         }
     }
 
-    if (!found) {
+    if (!found)
+    {
         ALOGE("BypassCameraBurstBufferManager_dequeueBuffer: buffer not found in pool");
         window->cancelBuffer(window, anwb, fence);
         pthread_mutex_unlock(&bc->mutex);
@@ -392,12 +431,12 @@ extern "C" int BypassCameraBurstBufferManager_dequeueBuffer(
     }
 
     found->fence = fence;
-    found->state = 1;  // dequeued
+    found->state = 1; // dequeued
     bc->dequeueCount++;
 
     *outEntry = found;
     ALOGD("BypassCameraBurstBufferManager_dequeueBuffer: got entry=%p imgBuf=%p anwb=%p",
-        found, found->imageBuf, found->anwb);
+          found, found->imageBuf, found->anwb);
 
     pthread_mutex_unlock(&bc->mutex);
     return 0;
@@ -417,19 +456,23 @@ extern "C" int BypassCameraBurstBufferManager_dequeueBuffer(
 // 多出來的那行。
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraBurstBufferManager_queueBuffer(
-        imageprocessor::BypassCameraContext* ctx,
-        imageprocessor::BufEntry* entry) {
-    if (!ctx || !entry) return -1;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
+    imageprocessor::BypassCameraContext *ctx,
+    imageprocessor::BufEntry *entry)
+{
+    if (!ctx || !entry)
+        return -1;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
 
-    ANativeWindow* window = bc->surface.get();
-    if (!window) return -1;
+    ANativeWindow *window = bc->surface.get();
+    if (!window)
+        return -1;
 
     // Queue buffer 回 Surface — Java ImageReader 會收到 onImageAvailable
-    int ret = window->queueBuffer(window, (ANativeWindowBuffer*)entry->anwb, entry->fence);
-    entry->state = 4;  // 已交給 consumer，不是 0(free)
+    int ret = window->queueBuffer(window, (ANativeWindowBuffer *)entry->anwb, entry->fence);
+    entry->state = 4; // 已交給 consumer，不是 0(free)
 
-    if (bc->dequeueCount > 0) bc->dequeueCount--;
+    if (bc->dequeueCount > 0)
+        bc->dequeueCount--;
 
     ALOGD("BypassCameraBurstBufferManager_queueBuffer: ret=%d entry=%p", ret, entry);
     return ret;
@@ -441,14 +484,18 @@ extern "C" int BypassCameraBurstBufferManager_queueBuffer(
 // 一次可能同時有多個 buffer 在途，必須用 imageBuf->getNative() 對應的
 // native handle 為 key 查回 BufEntry，"state==2" 線性搜尋無法區分是哪一個。
 // ─────────────────────────────────────────────────────
-extern "C" imageprocessor::BufEntry* BypassCameraBurstBufferManager_findByNativeHandle(
-        imageprocessor::BypassCameraContext* ctx, void* nativeHandle) {
-    if (!ctx) return nullptr;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
-    if (!bc->byNativeHandle) return nullptr;
+extern "C" imageprocessor::BufEntry *BypassCameraBurstBufferManager_findByNativeHandle(
+    imageprocessor::BypassCameraContext *ctx, void *nativeHandle)
+{
+    if (!ctx)
+        return nullptr;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
+    if (!bc->byNativeHandle)
+        return nullptr;
     ssize_t idx = bc->byNativeHandle->indexOf(
-            android::key_value_pair_t<void*, imageprocessor::BufEntry*>(nativeHandle));
-    if (idx < 0) return nullptr;
+        android::key_value_pair_t<void *, imageprocessor::BufEntry *>(nativeHandle));
+    if (idx < 0)
+        return nullptr;
     return (*bc->byNativeHandle)[idx].value;
 }
 
@@ -457,17 +504,21 @@ extern "C" imageprocessor::BufEntry* BypassCameraBurstBufferManager_findByNative
 // 來自 so_32 @ 0x0001ad9d
 // ─────────────────────────────────────────────────────
 extern "C" void BypassCameraBurstBufferManager_cancelBuffer(
-        imageprocessor::BypassCameraContext* ctx,
-        imageprocessor::BufEntry* entry) {
-    if (!ctx || !entry) return;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
-    ANativeWindow* window = bc->surface.get();
-    if (!window) return;
+    imageprocessor::BypassCameraContext *ctx,
+    imageprocessor::BufEntry *entry)
+{
+    if (!ctx || !entry)
+        return;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
+    ANativeWindow *window = bc->surface.get();
+    if (!window)
+        return;
 
-    window->cancelBuffer(window, (ANativeWindowBuffer*)entry->anwb, entry->fence);
+    window->cancelBuffer(window, (ANativeWindowBuffer *)entry->anwb, entry->fence);
     entry->fence = -1;
     entry->state = 0;
-    if (bc->dequeueCount > 0) bc->dequeueCount--;
+    if (bc->dequeueCount > 0)
+        bc->dequeueCount--;
 }
 
 // ─────────────────────────────────────────────────────
@@ -475,19 +526,25 @@ extern "C" void BypassCameraBurstBufferManager_cancelBuffer(
 // 來自 so_32 @ 0x0001ae2d
 // ─────────────────────────────────────────────────────
 extern "C" void BypassCameraBurstBufferManager_cancelBuffers(
-        imageprocessor::BypassCameraContext* ctx,
-        android::Vector<cacao::ImageBuf*>* bufs) {
+    imageprocessor::BypassCameraContext *ctx,
+    android::Vector<cacao::ImageBuf *> *bufs)
+{
     (void)bufs;
-    if (!ctx) return;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
-    ANativeWindow* window = bc->surface.get();
-    if (!window) return;
+    if (!ctx)
+        return;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
+    ANativeWindow *window = bc->surface.get();
+    if (!window)
+        return;
 
-    if (bc->byBufferPtr) {
-        for (size_t i = 0; i < bc->byBufferPtr->size(); i++) {
-            imageprocessor::BufEntry* e = (*bc->byBufferPtr)[i].value;
-            if (e && e->state != 0) {
-                window->cancelBuffer(window, (ANativeWindowBuffer*)e->anwb, e->fence);
+    if (bc->byBufferPtr)
+    {
+        for (size_t i = 0; i < bc->byBufferPtr->size(); i++)
+        {
+            imageprocessor::BufEntry *e = (*bc->byBufferPtr)[i].value;
+            if (e && e->state != 0)
+            {
+                window->cancelBuffer(window, (ANativeWindowBuffer *)e->anwb, e->fence);
                 e->fence = -1;
                 e->state = 0;
             }
@@ -505,20 +562,25 @@ extern "C" void BypassCameraBurstBufferManager_cancelBuffers(
 // 但若一張都沒拿到就回傳 0 顆（讓呼叫端視為失敗）。
 // ─────────────────────────────────────────────────────
 extern "C" int BypassCameraBurstBufferManager_createBufVector(
-        imageprocessor::BypassCameraContext* ctx,
-        android::Vector<cacao::ImageBuf*>** outVec,
-        int count) {
-    if (!outVec) return 0;
-    *outVec = new android::Vector<cacao::ImageBuf*>();
-    if (!ctx || count < 1) {
+    imageprocessor::BypassCameraContext *ctx,
+    android::Vector<cacao::ImageBuf *> **outVec,
+    int count)
+{
+    if (!outVec)
+        return 0;
+    *outVec = new android::Vector<cacao::ImageBuf *>();
+    if (!ctx || count < 1)
+    {
         ALOGD("BypassCameraBurstBufferManager_createBufVector: count=%d, empty vector", count);
         return 0;
     }
 
     int gotten = 0;
-    for (int i = 0; i < count; i++) {
-        imageprocessor::BufEntry* entry = nullptr;
-        if (BypassCameraBurstBufferManager_dequeueBuffer(ctx, &entry) == 0 && entry) {
+    for (int i = 0; i < count; i++)
+    {
+        imageprocessor::BufEntry *entry = nullptr;
+        if (BypassCameraBurstBufferManager_dequeueBuffer(ctx, &entry) == 0 && entry)
+        {
             (*outVec)->push_back(entry->imageBuf);
             gotten++;
         }
@@ -532,11 +594,13 @@ extern "C" int BypassCameraBurstBufferManager_createBufVector(
 // 來自 so_32 @ 0x0001b048
 // ─────────────────────────────────────────────────────
 extern "C" void BypassCameraBurstBufferManager_dump(
-        imageprocessor::BypassCameraContext* ctx) {
-    if (!ctx) return;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
+    imageprocessor::BypassCameraContext *ctx)
+{
+    if (!ctx)
+        return;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
     ALOGD("BurstBufMgr: ready=%d count=%zu dequeued=%u total=%u",
-        bc->ready, bc->byBufferPtr ? bc->byBufferPtr->size() : 0, bc->dequeueCount, bc->totalBufCount);
+          bc->ready, bc->byBufferPtr ? bc->byBufferPtr->size() : 0, bc->dequeueCount, bc->totalBufCount);
 }
 
 // ─────────────────────────────────────────────────────
@@ -545,21 +609,29 @@ extern "C" void BypassCameraBurstBufferManager_dump(
 // 功能：對 bufs 中每個 ImageBuf 對應的 ANativeWindowBuffer 呼叫 cancelBuffer
 // ─────────────────────────────────────────────────────
 extern "C" void BypassCameraBurstBufferManager_cancelAllBuffer(
-        imageprocessor::BypassCameraContext* ctx,
-        android::Vector<cacao::ImageBuf*>* bufs) {
-    if (!ctx || !bufs) return;
-    imageprocessor::BypassCameraBufferContext* bc = &ctx->bufCtx;
-    ANativeWindow* window = bc->surface.get();
-    if (!window) return;
+    imageprocessor::BypassCameraContext *ctx,
+    android::Vector<cacao::ImageBuf *> *bufs)
+{
+    if (!ctx || !bufs)
+        return;
+    imageprocessor::BypassCameraBufferContext *bc = &ctx->bufCtx;
+    ANativeWindow *window = bc->surface.get();
+    if (!window)
+        return;
 
-    if (!bc->byBufferPtr) return;
-    for (size_t i = 0; i < bc->byBufferPtr->size(); i++) {
-        imageprocessor::BufEntry* e = (*bc->byBufferPtr)[i].value;
-        if (!e || e->state == 0) continue;
+    if (!bc->byBufferPtr)
+        return;
+    for (size_t i = 0; i < bc->byBufferPtr->size(); i++)
+    {
+        imageprocessor::BufEntry *e = (*bc->byBufferPtr)[i].value;
+        if (!e || e->state == 0)
+            continue;
         // 檢查此 BufEntry 的 imageBuf 是否在 bufs 中
-        for (size_t j = 0; j < bufs->size(); j++) {
-            if ((*bufs)[j] == e->imageBuf) {
-                window->cancelBuffer(window, (ANativeWindowBuffer*)e->anwb, e->fence);
+        for (size_t j = 0; j < bufs->size(); j++)
+        {
+            if ((*bufs)[j] == e->imageBuf)
+            {
+                window->cancelBuffer(window, (ANativeWindowBuffer *)e->anwb, e->fence);
                 e->fence = -1;
                 e->state = 0;
                 bc->dequeueCount = (bc->dequeueCount > 0) ? bc->dequeueCount - 1 : 0;

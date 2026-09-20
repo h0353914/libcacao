@@ -10,17 +10,23 @@
 #include <hwbinder/IBinder.h>
 #include <hwbinder/Parcel.h>
 
-namespace vendor {
-namespace somc {
-namespace hardware {
-namespace camera {
-namespace device {
-namespace V1_0 {
-}  // namespace V1_0
-}  // namespace device
-}  // namespace camera
-}  // namespace hardware
-}  // namespace somc
-}  // namespace vendor
+namespace vendor
+{
+    namespace somc
+    {
+        namespace hardware
+        {
+            namespace camera
+            {
+                namespace device
+                {
+                    namespace V1_0
+                    {
+                    } // namespace V1_0
+                } // namespace device
+            } // namespace camera
+        } // namespace hardware
+    } // namespace somc
+} // namespace vendor
 
-#endif  // HIDL_GENERATED_VENDOR_SOMC_HARDWARE_CAMERA_DEVICE_V1_0_IHWCAMERAEXTENSIONDEVICE_H
+#endif // HIDL_GENERATED_VENDOR_SOMC_HARDWARE_CAMERA_DEVICE_V1_0_IHWCAMERAEXTENSIONDEVICE_H

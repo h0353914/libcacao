@@ -19,24 +19,26 @@
 
 __BEGIN_DECLS
 
-enum android_fdsan_owner_type {
-    ANDROID_FDSAN_OWNER_TYPE_GENERIC_00       = 0,
-    ANDROID_FDSAN_OWNER_TYPE_GENERIC_FF       = 255,
-    ANDROID_FDSAN_OWNER_TYPE_FILE             = 1,
-    ANDROID_FDSAN_OWNER_TYPE_DIR              = 2,
-    ANDROID_FDSAN_OWNER_TYPE_UNIQUE_FD        = 3,
-    ANDROID_FDSAN_OWNER_TYPE_SQLITE           = 4,
-    ANDROID_FDSAN_OWNER_TYPE_FILEINPUTSTREAM  = 5,
+enum android_fdsan_owner_type
+{
+    ANDROID_FDSAN_OWNER_TYPE_GENERIC_00 = 0,
+    ANDROID_FDSAN_OWNER_TYPE_GENERIC_FF = 255,
+    ANDROID_FDSAN_OWNER_TYPE_FILE = 1,
+    ANDROID_FDSAN_OWNER_TYPE_DIR = 2,
+    ANDROID_FDSAN_OWNER_TYPE_UNIQUE_FD = 3,
+    ANDROID_FDSAN_OWNER_TYPE_SQLITE = 4,
+    ANDROID_FDSAN_OWNER_TYPE_FILEINPUTSTREAM = 5,
     ANDROID_FDSAN_OWNER_TYPE_FILEOUTPUTSTREAM = 6,
     ANDROID_FDSAN_OWNER_TYPE_RANDOMACCESSFILE = 7,
     ANDROID_FDSAN_OWNER_TYPE_PARCELFILEDESCRIPTOR = 8,
-    ANDROID_FDSAN_OWNER_TYPE_ART_FDFILE       = 9,
+    ANDROID_FDSAN_OWNER_TYPE_ART_FDFILE = 9,
     ANDROID_FDSAN_OWNER_TYPE_DATAGRAMSOCKETIMPL = 10,
-    ANDROID_FDSAN_OWNER_TYPE_SOCKETIMPL       = 11,
-    ANDROID_FDSAN_OWNER_TYPE_ZIPARCHIVE       = 12,
+    ANDROID_FDSAN_OWNER_TYPE_SOCKETIMPL = 11,
+    ANDROID_FDSAN_OWNER_TYPE_ZIPARCHIVE = 12,
 };
 
-enum android_fdsan_error_level {
+enum android_fdsan_error_level
+{
     ANDROID_FDSAN_ERROR_LEVEL_DISABLED,
     ANDROID_FDSAN_ERROR_LEVEL_WARN_ONCE,
     ANDROID_FDSAN_ERROR_LEVEL_WARN_ALWAYS,
@@ -60,7 +62,7 @@ int android_fdsan_close_with_tag(int fd, uint64_t tag)
     __attribute__((__weak__));
 
 uint64_t android_fdsan_get_owner_tag(int fd) __attribute__((__weak__));
-const char* android_fdsan_get_tag_type(uint64_t tag) __attribute__((__weak__));
+const char *android_fdsan_get_tag_type(uint64_t tag) __attribute__((__weak__));
 uint64_t android_fdsan_get_tag_value(uint64_t tag) __attribute__((__weak__));
 
 enum android_fdsan_error_level android_fdsan_get_error_level()

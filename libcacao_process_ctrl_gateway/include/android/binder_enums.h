@@ -15,23 +15,26 @@
 #include <iterator>
 #include <type_traits>
 
-namespace ndk {
+namespace ndk
+{
 
-namespace internal {
-template <typename T>
-struct invalid_type;
+    namespace internal
+    {
+        template <typename T>
+        struct invalid_type;
 
-template <typename EnumType,
-          typename = typename std::enable_if<std::is_enum<EnumType>::value>::type>
-constexpr invalid_type<EnumType> enum_values;
-}  // namespace internal
+        template <typename EnumType,
+                  typename = typename std::enable_if<std::is_enum<EnumType>::value>::type>
+        constexpr invalid_type<EnumType> enum_values;
+    } // namespace internal
 
-template <typename EnumType,
-          typename = typename std::enable_if<std::is_enum<EnumType>::value>::type>
-struct enum_range {
-    constexpr auto begin() const { return std::begin(internal::enum_values<EnumType>); }
-    constexpr auto end() const { return std::end(internal::enum_values<EnumType>); }
-};
+    template <typename EnumType,
+              typename = typename std::enable_if<std::is_enum<EnumType>::value>::type>
+    struct enum_range
+    {
+        constexpr auto begin() const { return std::begin(internal::enum_values<EnumType>); }
+        constexpr auto end() const { return std::end(internal::enum_values<EnumType>); }
+    };
 
-}  // namespace ndk
+} // namespace ndk
 #endif

@@ -27,7 +27,8 @@ extern "C" int cammw_util_init(void);
 // 用不同角度存取，寧可 1:1 對應反編譯的 word-index 存取，不猜語意名字）。
 //   w[0]=base/mapped_addr, w[1]=size, w[2]=fd, w[3]=fd_metadata/descriptor,
 //   w[4]=type(0=ashmem 1=gralloc 2=unsupported 3=heap), w[5] 低位元組=cleanup_flag
-struct cammw_util_image_buffer_t {
+struct cammw_util_image_buffer_t
+{
   int32_t w[6];
 };
 static_assert(sizeof(cammw_util_image_buffer_t) == 24, "bufmgr_open 每筆前進 6 個 word");

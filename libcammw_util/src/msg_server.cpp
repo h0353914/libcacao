@@ -34,15 +34,18 @@ extern "C" int cammw_util_msg_server_thread(void *arg);
 // listen()、啟動 accept 執行緒。connection_callback(accepted_fd, context)
 // 會在每次 accept() 成功後被叫。
 extern "C" cammw_msg_server_context *cammw_util_msg_srv_open(const char *name, int priority,
-                                                              void *connection_context,
-                                                              void (*connection_callback)(int,
-                                                                                          void *)) {
-  if (name == nullptr || connection_callback == nullptr) {
+                                                             void *connection_context,
+                                                             void (*connection_callback)(int,
+                                                                                         void *))
+{
+  if (name == nullptr || connection_callback == nullptr)
+  {
     return nullptr;
   }
 
   auto *server = static_cast<cammw_msg_server_context *>(calloc(1, sizeof(cammw_msg_server_context)));
-  if (server == nullptr) {
+  if (server == nullptr)
+  {
     ALOGE("E: %s: no memory", __FUNCTION__);
     return nullptr;
   }
@@ -55,27 +58,36 @@ extern "C" cammw_msg_server_context *cammw_util_msg_srv_open(const char *name, i
   snprintf(sock_name, sizeof(sock_name), "cammw_%s", name);
   int fd = android_get_control_socket(sock_name);
   bool ok = false;
-  if (fd < 0) {
+  if (fd < 0)
+  {
     ALOGE("E: %s: socket connect err fd=%d %s (%d %s)", __FUNCTION__, fd, sock_name, errno,
           strerror(errno));
-  } else if (listen(fd, 4) < 0) {
+  }
+  else if (listen(fd, 4) < 0)
+  {
     ALOGE("E: %s: listen err %d", __FUNCTION__, errno);
     close(fd);
-  } else {
+  }
+  else
+  {
     server->fd = fd;
     strlcpy(server->socket_path, sock_name, sizeof(server->socket_path));
     char thread_name[64];
     snprintf(thread_name, sizeof(thread_name), "cammw_srv:%s", name);
     if (cammw_util_thread_create(0, thread_name, priority, cammw_util_msg_server_thread, server,
-                                  &server->accept_thread) == 0) {
+                                 &server->accept_thread) == 0)
+    {
       ok = true;
-    } else {
+    }
+    else
+    {
       close(fd);
       server->fd = -1;
     }
   }
 
-  if (!ok) {
+  if (!ok)
+  {
     pthread_mutex_destroy(&server->session_table_mutex);
     free(server);
     return nullptr;
@@ -85,9 +97,11 @@ extern "C" cammw_msg_server_context *cammw_util_msg_srv_open(const char *name, i
 
 // accept loop：select({shutdown_fd, listen_fd})，收到 shutdown 的 'y'
 // 就結束，否則 accept() 一個連線就呼叫 connection_callback。
-extern "C" int cammw_util_msg_server_thread(void *arg) {
+extern "C" int cammw_util_msg_server_thread(void *arg)
+{
   auto *server = static_cast<cammw_msg_server_context *>(arg);
-  if (server == nullptr || server->fd < 0) {
+  if (server == nullptr || server->fd < 0)
+  {
     return 0xffffff99;
   }
 
@@ -96,24 +110,29 @@ extern "C" int cammw_util_msg_server_thread(void *arg) {
   const int nfds = (shutdown_fd > listen_fd ? shutdown_fd : listen_fd) + 1;
 
   bool done = false;
-  while (!done) {
+  while (!done)
+  {
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(shutdown_fd, &fds);
     FD_SET(listen_fd, &fds);
-    if (select(nfds, &fds, nullptr, nullptr, nullptr) < 0) {
+    if (select(nfds, &fds, nullptr, nullptr, nullptr) < 0)
+    {
       break;
     }
-    if (FD_ISSET(shutdown_fd, &fds)) {
+    if (FD_ISSET(shutdown_fd, &fds))
+    {
       char c = 0;
       read(shutdown_fd, &c, 1);
       done = (c == 'y');
     }
-    if (!FD_ISSET(listen_fd, &fds)) {
+    if (!FD_ISSET(listen_fd, &fds))
+    {
       continue;
     }
     int client_fd = accept(listen_fd, nullptr, nullptr);
-    if (client_fd >= 0) {
+    if (client_fd >= 0)
+    {
       server->connection_callback(client_fd, server->connection_callback_context);
     }
   }
@@ -134,13 +153,17 @@ extern "C" cammw_util_msg_session_t *cammw_util_msg_srv_create_session(
     cammw_msg_server_context *server, int fd, const char *name, int priority, void *user_ctx,
     uint32_t (*message_callback)(void *, cammw_util_msg_t *, void *),
     void (*disconnect_callback)(void *, void *), uint32_t private_data_size, void *private_data,
-    int aux1, int aux2) {
-  if (server == nullptr) {
+    int aux1, int aux2)
+{
+  if (server == nullptr)
+  {
     return nullptr;
   }
   if (disconnect_callback == nullptr || message_callback == nullptr || name == nullptr ||
-      server->fd < 0) {
-    if (fd >= 0) {
+      server->fd < 0)
+  {
+    if (fd >= 0)
+    {
       close(fd);
     }
     return nullptr;
@@ -149,18 +172,23 @@ extern "C" cammw_util_msg_session_t *cammw_util_msg_srv_create_session(
   int status = -0x6b;
   cammw_util_msg_session_t *session = nullptr;
   pthread_mutex_lock(&server->session_table_mutex);
-  for (int i = 0; i < 4; ++i) {
-    if (server->session_table[i] != nullptr) {
+  for (int i = 0; i < 4; ++i)
+  {
+    if (server->session_table[i] != nullptr)
+    {
       continue;
     }
     char session_name[64];
     snprintf(session_name, sizeof(session_name), "%s_session.%d", name, i);
     session = cammw_util_msg_create_session(fd, session_name, priority, user_ctx, message_callback,
-                                             disconnect_callback, private_data_size, private_data,
-                                             aux1, aux2);
-    if (session == nullptr) {
+                                            disconnect_callback, private_data_size, private_data,
+                                            aux1, aux2);
+    if (session == nullptr)
+    {
       status = -0x66;
-    } else {
+    }
+    else
+    {
       server->session_table[i] = session;
       status = 0;
       server->session_count++;
@@ -169,8 +197,10 @@ extern "C" cammw_util_msg_session_t *cammw_util_msg_srv_create_session(
   }
   pthread_mutex_unlock(&server->session_table_mutex);
 
-  if (status != 0) {
-    if (fd >= 0) {
+  if (status != 0)
+  {
+    if (fd >= 0)
+    {
       close(fd);
     }
     return nullptr;
@@ -186,13 +216,17 @@ extern "C" cammw_util_msg_session_t *cammw_util_msg_srv_create_session(
   return session;
 }
 
-extern "C" void cammw_util_msg_srv_close(cammw_msg_server_context *server) {
-  if (server == nullptr || server->fd < 0) {
+extern "C" void cammw_util_msg_srv_close(cammw_msg_server_context *server)
+{
+  if (server == nullptr || server->fd < 0)
+  {
     return;
   }
   pthread_mutex_lock(&server->session_table_mutex);
-  for (int i = 0; i < 4; ++i) {
-    if (server->session_table[i] != nullptr) {
+  for (int i = 0; i < 4; ++i)
+  {
+    if (server->session_table[i] != nullptr)
+    {
       cammw_util_msg_delete_session(server->session_table[i]);
       server->session_table[i] = nullptr;
     }
@@ -206,13 +240,17 @@ extern "C" void cammw_util_msg_srv_close(cammw_msg_server_context *server) {
 }
 
 extern "C" void cammw_util_msg_srv_delete_session(cammw_msg_server_context *server,
-                                                  cammw_util_msg_session_t *session) {
-  if (server == nullptr || session == nullptr || server->fd < 0 || session->fd < 0) {
+                                                  cammw_util_msg_session_t *session)
+{
+  if (server == nullptr || session == nullptr || server->fd < 0 || session->fd < 0)
+  {
     return;
   }
   pthread_mutex_lock(&server->session_table_mutex);
-  for (int i = 0; i < 4; ++i) {
-    if (server->session_table[i] == session) {
+  for (int i = 0; i < 4; ++i)
+  {
+    if (server->session_table[i] == session)
+    {
       cammw_util_msg_delete_session(session);
       server->session_table[i] = nullptr;
       server->session_count--;
