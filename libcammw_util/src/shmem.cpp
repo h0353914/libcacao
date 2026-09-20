@@ -641,8 +641,15 @@ extern "C" int cammw_util_shmem_make_image_buf_from_handle(const void *handle, i
       ALOGE("E: %s: Unknown Format", __FUNCTION__);
       return -0x67;
     }
-  } else if (fmt == 0x7fa30c04 || fmt == 0x113 || fmt == 0x102) {
+  } else if (fmt == 0x7fa30c04 || fmt == 0x102) {
     pixel_format = 0x20000;
+  } else if (fmt == 0x113) {
+    // NV21_ZSL(0x113) 是 NV21（CrCb / V-first），跟 0x11 同族，不是 0x20000。
+    // 原版 0x4a74 先把 r1 預設成 0x20001，只有 0x7fa30c04(0x4ade) 與
+    // 0x102(0x4aea) 會落到 0x4af0 改寫成 0x20000；0x113(0x4ae6) 是直接跳
+    // 0x4afa 保留預設值。先前誤併進 0x20000 那組，等於把 V-first 的 ZSL
+    // 快照 buffer 宣告成 U-first，消費端 chroma 讀反 → 橘色拍出來變藍色。
+    pixel_format = 0x20001;
   } else {
     ALOGE("E: %s: Unknown Format", __FUNCTION__);
     return -0x67;
